@@ -180,3 +180,12 @@ main.con-barra{padding-bottom:calc(var(--nav-h) + 96px + env(safe-area-inset-bot
 [hidden]{display:none!important}
 .chips{scrollbar-width:none}
 .chips::-webkit-scrollbar{display:none}
+
+/* Avisos flotantes (20/10/2026): al tamaño del texto, con barra que se vacía en 5 s */
+#aviso{width:max-content;max-width:min(92vw,520px);overflow:hidden;padding:12px 20px 16px;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.35);line-height:1.3}
+#aviso .barra,#aviso-accion .barra{position:absolute;left:0;bottom:0;height:4px;width:100%;background:currentColor;opacity:.55;transform-origin:left center;transform:scaleX(0)}
+#aviso.show .barra,#aviso-accion.show .barra{animation:vaciar 5s linear forwards}
+@keyframes vaciar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+#aviso-accion{overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.35);padding-bottom:12px}
+@media (prefers-reduced-motion:reduce){#aviso.show .barra,#aviso-accion.show .barra{animation-duration:5s}}
+#aviso-accion{left:50%;right:auto;transform:translateX(-50%);margin-inline:0;width:max-content;max-width:min(94vw,520px)}

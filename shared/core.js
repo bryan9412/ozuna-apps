@@ -143,7 +143,7 @@ export function nuevaSal(){ const a = new Uint8Array(16); crypto.getRandomValues
 /* ---------- almacenamiento local (IndexedDB) ---------- */
 const TIENDAS = ['kv', 'ventas', 'entregas', 'cierres', 'eventos'];
 export class DB {
-  constructor(nombre, opciones){ this.nombre = nombre; this.p = null; this.conMod = !!(opciones && opciones.mod); }
+  constructor(nombre, opciones){ this.nombre = nombre; this.p = null; this.conMod = !!(opciones && opciones.mod); this.quien = ''; }
   abrir(){
     if(!this.p) this.p = new Promise((res, rej) => {
       const r = indexedDB.open(this.nombre, 1);
@@ -158,7 +158,7 @@ export class DB {
   }
   get(t, id){ return this._tx(t, 'readonly', s => s.get(id)); }
   /* Todo registro que no es de configuración lleva la hora de su último cambio (mod); la sincronización entre teléfonos del dueño se basa en eso. */
-  put(t, obj, conservarMod){ if(this.conMod && t !== 'kv' && !conservarMod) obj.mod = Date.now(); return this._tx(t, 'readwrite', s => s.put(obj)); }
+  put(t, obj, conservarMod){ if(this.conMod && t !== 'kv' && !conservarMod){ obj.mod = Date.now(); if(this.quien){ obj.modPor = this.quien; if(t === 'eventos' && !obj.por) obj.por = this.quien; } } return this._tx(t, 'readwrite', s => s.put(obj)); }
   del(t, id){ return this._tx(t, 'readwrite', s => s.delete(id)); }
   todos(t){ return this._tx(t, 'readonly', s => s.getAll()); }
   vaciar(t){ return this._tx(t, 'readwrite', s => s.clear()); }

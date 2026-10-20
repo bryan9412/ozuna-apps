@@ -3,12 +3,13 @@ import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar } from '../shared/ui.js';
 import { cierresUltimos, eventos, ganancia, costoCup, fiadoPendiente, sumaDias, clave } from './datos.js';
 import { vTraspasos, vCompras, vGastos, vCasa, vConteo, vMerma, vFiado } from './ops.js';
+import { resumenN, describirCambios, vActividad } from './actividad.js';
 import { vHistorial, vReportes, exportarExcel } from './reportes.js';
 import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.4.6';
+const VERSION_APP = '0.4.7';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -16,7 +17,13 @@ const NAV_TODO = [['hoy', 'grafica', 'Hoy'], ['entrega', 'caja', 'Entrega'], ['c
 const NAV_SOLO = [['hoy', 'grafica', 'Hoy'], ['cierres', 'check', 'Cierres'], ['mas', 'ajustes', 'Más']];
 const raiz = document.getElementById('app');
 const ticket = n => 'T-' + String(n).padStart(3, '0');
-const guardarN = () => { sellarN(N); return db.kvSet('negocio', N); };
+let fotoN = null;   /* cómo estaba la configuración la última vez que se guardó, para anotar quién cambió qué */
+const omitirBitacora = () => { fotoN = null; };
+const guardarN = async () => {
+  sellarN(N);
+  if(perfil && !perfil.consulta){ const nueva = resumenN(N); if(fotoN) for(const texto of describirCambios(fotoN, nueva)) await db.put('eventos', {id:C.uid(), clase:'bitacora', texto, fecha:C.hoy(), ts:Date.now()}); fotoN = nueva; }
+  return db.kvSet('negocio', N);
+};
 const MEDIDA_OPS = Object.keys(C.MEDIDAS);
 const ROLES = ['Vendedora o vendedor', 'Pizzero', 'Cocinero', 'Encargado', 'Mensajero', 'Familiar', 'Otro'];
 const BASES = ['Un porciento de lo que se vende en su puesto', 'Un porciento de lo que él produce', 'Un pago fijo al día', 'Otra forma'];
@@ -35,6 +42,7 @@ function nuevoNegocio(nombre, clave){
 /* ---------- arranque y clave ---------- */
 async function iniciar(){
   perfil = await db.kv('perfil'); llaves = await db.kv('llaves'); N = await db.kv('negocio');
+  if(perfil && !perfil.consulta) db.quien = perfil.nombre; if(N) fotoN = resumenN(N);
   registrarSW('./sw.js', aplicar => { hayVersionNueva = aplicar; if(desbloqueado) pintar(); });
   if(!perfil || !N) return bienvenida();
   C.pedirPersistencia();
@@ -66,6 +74,7 @@ function bienvenida(){
       const sal = C.nuevaSal(); N = nuevoNegocio(nombre.value.trim(), {sal, hash:await C.hashClave(c1.value, sal)});
       if(cues.value.trim()){ const r = desdeCuestionario(cues.value); if(r) aviso(r, true); else aviso('Datos del cuestionario cargados.'); }
       await db.kvSet('llaves', llaves); await db.kvSet('perfil', perfil); await guardarN(); C.pedirPersistencia();
+      db.quien = perfil.nombre; fotoN = resumenN(N);
       desbloqueado = true; pantalla = 'hoy'; pintar();
     }}, 'Empezar'),
     h('div', {class:'card', style:'margin-top:18px'}, h('h3', {}, '¿Ya se usa en otro teléfono?'), h('p', {class:'ayuda'}, 'Si el dueño ya tiene la aplicación y quieres usarla igual que él (por ejemplo, para registrar compras o armar entregas), carga la copia completa que te mande. Después se mantienen al día con «Sincronizar».'),
@@ -138,7 +147,7 @@ async function procesarTexto(txt){
 async function recibirSync(env){
   const v = await C.verificarSobre(env, perfil.pub);
   if(!v.ok){ aviso(v.motivo.indexOf('no viene de quien') >= 0 ? 'Este teléfono tiene otra llave, no la del dueño. Primero carga la copia completa del dueño: Más → Ajustes y copia → «Recuperar una copia».' : v.motivo, true); return; }
-  const r = await aplicarSync(db, N, env.payload); await guardarN();
+  const r = await aplicarSync(db, N, env.payload); omitirBitacora(); await guardarN();
   const partes = []; if(r.nuevos) partes.push(r.nuevos + ' nuevos'); if(r.actualizados) partes.push(r.actualizados + ' al día'); if(r.config) partes.push('catálogo y ajustes');
   aviso(partes.length ? 'Cambios cargados: ' + partes.join(', ') + '.' : 'Ya tenías todo lo que traía.'); pintar();
 }
@@ -478,14 +487,14 @@ function editarAgrego(a, nuevo){
 /* ---------- más ---------- */
 function vMas(){
   if(masSub){
-    const subs = {compras:vCompras, gastos:vGastos, casa:vCasa, conteo:vConteo, merma:vMerma, traspasos:vTraspasos, fiado:vFiado, historial:vHistorial, reportes:vReportes, equipo:vEquipo, ajustes:vAjustes, sincronizar:vSincronizar};
+    const subs = {compras:vCompras, gastos:vGastos, casa:vCasa, conteo:vConteo, merma:vMerma, traspasos:vTraspasos, fiado:vFiado, historial:vHistorial, reportes:vReportes, equipo:vEquipo, actividad:vActividad, ajustes:vAjustes, sincronizar:vSincronizar};
     return subs[masSub](ctx);
   }
   const t = (id, ico, nombre, desc) => h('button', {class:'card', style:'display:block;width:100%;text-align:left', onclick:() => ctx.ir(id)}, h('div', {class:'fila'}, h('div', {}, h('b', {}, ico + ' ' + nombre), h('div', {class:'ayuda'}, desc)), h('span', {'aria-hidden':'true'}, '›')));
   const todas = [t('historial', '📈', 'Historial', 'Días, semanas y meses; lo que más se vende'), t('reportes', '📤', 'Reportes', 'Excel y resumen para Yelenis'), t('fiado', '📒', 'Fiado', 'Quién debe y cuánto'),
     t('compras', '🛒', 'Compras', 'Lo que compras cada día'), t('gastos', '💡', 'Gastos', 'Fijos del mes y los del día'), t('casa', '🏠', 'Almacén de casa', 'Lo que hay guardado en casa'),
     t('merma', '🗑️', 'Merma', 'Lo que se echa a perder'), t('traspasos', '🔁', 'Traspasos', 'Mercancía de un puesto a otro'), t('conteo', '🔢', 'Conteo del sábado', 'Contar y comparar'),
-    t('sincronizar', '🔄', 'Sincronizar', 'Para que Yelenis y tú vean lo mismo'), t('equipo', '👥', 'Equipo', 'Teléfonos, puestos y personas'), t('ajustes', '⚙️', 'Ajustes y copia', 'Apariencia, copia de seguridad, clave')];
+    t('sincronizar', '🔄', 'Sincronizar', 'Para que Yelenis y tú vean lo mismo'), t('equipo', '👥', 'Equipo', 'Teléfonos, puestos y personas'), t('actividad', '📝', 'Quién hizo qué', 'Cambios y registros con nombre'), t('ajustes', '⚙️', 'Ajustes y copia', 'Apariencia, copia de seguridad, clave')];
   const solo = [todas[0], todas[1], todas[2], t('sincronizar', '🔄', 'Actualizar con cambios', 'Cargar lo nuevo que mande el dueño'), t('ajustes', '⚙️', 'Ajustes', 'Apariencia y copia de consulta')];
   montar(raiz, banner(), h('h1', {}, 'Más'), ctx.SOLO ? solo : todas);
 }
@@ -565,12 +574,12 @@ async function leerCopia(){
 }
 async function cargarDatosCopia(d){
   await db.vaciar('entregas'); await db.vaciar('cierres'); await db.vaciar('eventos');
-  for(const x of d.entregas || []) await db.put('entregas', x); for(const x of d.cierres || []) await db.put('cierres', x); for(const x of d.eventos || []) await db.put('eventos', x);
+  for(const x of d.entregas || []) await db.put('entregas', x, true); for(const x of d.cierres || []) await db.put('cierres', x, true); for(const x of d.eventos || []) await db.put('eventos', x, true);
 }
 async function restaurar(){
   const d = await leerCopia(); if(!d) return;
   if(!(await confirmar('Esto reemplaza todo lo que hay ahora', 'Se cargan tu llave, tus datos y los cierres de la copia.', 'Recuperar', 'Cancelar'))) return;
-  llaves = {privateKey:await C.importarPrivada(d.llave), pub:d.perfil.pub}; perfil = d.perfil; N = d.negocio;
+  llaves = {privateKey:await C.importarPrivada(d.llave), pub:d.perfil.pub}; perfil = d.perfil; N = d.negocio; db.quien = perfil.nombre; omitirBitacora();
   await db.kvSet('llaves', llaves); await db.kvSet('perfil', perfil); await guardarN(); await cargarDatosCopia(d);
   desbloqueado = true; pantalla = 'hoy'; masSub = null; aviso('Copia recuperada'); pintar();
   await quienSoy(false);
@@ -580,7 +589,7 @@ function quienSoy(editando){
   return new Promise(res => hoja(editando ? 'Nombre en este teléfono' : '¿Quién usa este teléfono?', cerrar => {
     const n = h('input', {value:editando ? perfil.nombre : '', placeholder:'Tu nombre'});
     return h('div', {}, h('p', {class:'ayuda'}, editando ? '' : 'Esta copia es la del dueño. Escribe tu nombre para que sus archivos digan de quién son (por ejemplo, Yelenis). Si este es el teléfono del dueño, déjalo como está.'), campo('Nombre', n),
-      h('button', {class:'btn', onclick:async () => { const v = n.value.trim(); if(!v){ aviso('Escribe un nombre', true); return; } perfil.nombre = v; await db.kvSet('perfil', perfil); cerrar(); aviso('Listo, este teléfono es de ' + v); pintar(); }}, 'Guardar'),
+      h('button', {class:'btn', onclick:async () => { const v = n.value.trim(); if(!v){ aviso('Escribe un nombre', true); return; } perfil.nombre = v; db.quien = v; await db.kvSet('perfil', perfil); cerrar(); aviso('Listo, este teléfono es de ' + v); pintar(); }}, 'Guardar'),
       editando ? null : h('button', {class:'btn suave', onclick:cerrar}, 'Dejarlo como está'));
   }, () => res()));
 }
@@ -589,7 +598,7 @@ async function abrirConsulta(){
   const d = await leerCopia(); if(!d) return;
   if(perfil && !perfil.consulta && llaves && llaves.privateKey){ aviso('Este teléfono es del dueño: usa «Recuperar una copia».', true); return; }
   if(!(await confirmar('Abrir solo para ver', 'Verás las cuentas de la copia, sin poder cambiar nada ni mandar entregas.', 'Abrir', 'Cancelar'))) return;
-  perfil = {id:d.perfil.id, nombre:'Consulta', pub:d.perfil.pub, consulta:true}; llaves = {pub:d.perfil.pub}; N = d.negocio;
+  perfil = {id:d.perfil.id, nombre:'Consulta', pub:d.perfil.pub, consulta:true}; llaves = {pub:d.perfil.pub}; N = d.negocio; db.quien = ''; omitirBitacora();
   await db.kvSet('perfil', perfil); await db.kvSet('llaves', llaves); await guardarN(); await cargarDatosCopia(d);
   desbloqueado = true; pantalla = 'hoy'; masSub = null; pintar(); aviso('Copia cargada. Esta aplicación solo muestra las cuentas.');
 }

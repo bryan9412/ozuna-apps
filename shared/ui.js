@@ -14,12 +14,15 @@ export function h(tag, attrs, ...hijos){
 }
 export function montar(raiz, ...hijos){ raiz.replaceChildren(...hijos.flat(Infinity).filter(Boolean)); }
 
+/* Aviso flotante: se ajusta al texto, trae una barra que se va vaciando y dura 5 segundos como máximo (20/10/2026). */
+export const SEG_AVISO = 5;
 let tt;
 export function aviso(msg, malo){
   let t = document.getElementById('aviso');
   if(!t){ t = h('div', {id:'aviso', role:'status'}); document.body.append(t); }
-  t.textContent = msg; t.className = 'show' + (malo ? ' malo' : '');
-  clearTimeout(tt); tt = setTimeout(() => { t.className = ''; }, malo ? 4200 : 2200);
+  t.className = ''; t.replaceChildren(h('span', {}, msg), h('i', {class:'barra'})); void t.offsetWidth;
+  t.className = 'show' + (malo ? ' malo' : '');
+  clearTimeout(tt); tt = setTimeout(() => { t.className = ''; }, SEG_AVISO * 1000);
 }
 /* Hoja que sube desde abajo. contenido(cerrar) devuelve el cuerpo. */
 export function hoja(titulo, contenido, alCerrar){
@@ -78,8 +81,8 @@ export function avisoAccion(msg, etiqueta, accion){
   let t = document.getElementById('aviso-accion');
   if(!t){ t = h('div', {id:'aviso-accion', role:'status'}); document.body.append(t); }
   clearTimeout(avisoAccion.t);
-  t.replaceChildren(h('span', {}, msg), h('button', {onclick:() => { t.className = ''; clearTimeout(avisoAccion.t); accion(); }}, etiqueta)); t.className = 'show';
-  avisoAccion.t = setTimeout(() => { t.className = ''; }, 6000);
+  t.className = ''; t.replaceChildren(h('span', {}, msg), h('button', {onclick:() => { t.className = ''; clearTimeout(avisoAccion.t); accion(); }}, etiqueta), h('i', {class:'barra'})); void t.offsetWidth; t.className = 'show';
+  avisoAccion.t = setTimeout(() => { t.className = ''; }, SEG_AVISO * 1000);
 }
 export function barraNav(items, actual, ir){
   return h('nav', {class:'nav', 'aria-label':'Secciones'}, h('div', {class:'nav-in'},
