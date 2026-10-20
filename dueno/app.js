@@ -8,7 +8,7 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.3.0';
+const VERSION_APP = '0.3.1';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -283,7 +283,7 @@ async function generarEntrega(st, hoyEnts, comoMensaje){
     const payload = Object.assign({entregaId:C.uid(), fecha:st.fecha, puesto:{id:pu.id, nombre:pu.nombre}, dispositivoId:d.id, fondoCents:f, catalogo:catalogoPayload(st.pid), cantidades:cant, clave:N.clave}, extrasPayload());
     env = await C.firmarSobre('entrega', perfil, d.id, payload, llaves.privateKey);
     await db.put('entregas', {id:payload.entregaId, fecha:st.fecha, puestoId:pu.id, dispositivoId:d.id, ts:Date.now(), fondoCents:f, cantidades:cant});
-    nombre = C.nombreArchivo('entrega', pu.nombre, st.fecha);
+    nombre = C.nombreArchivo('entrega', pu.nombre, st.fecha === C.hoy() ? '' : 'para-' + st.fecha);
   } else {
     if(!hoyEnts.length){ aviso('Haz primero la entrega del día.', true); return; }
     if(!Object.keys(cant).length){ aviso('Pon al menos una cantidad para la reposición.', true); return; }

@@ -2,7 +2,7 @@
 import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema } from '../shared/ui.js';
 
-const VERSION_APP = '0.3.0';
+const VERSION_APP = '0.3.1';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -406,8 +406,8 @@ async function vVentas(){
   montar(raiz, banner(), h('p', {class:'marca'}, dia.puesto.nombre + ' · ' + C.fechaBonita(dia.fecha)), h('h1', {}, 'Ventas de hoy'),
     h('div', {class:'total'}, h('div', {}, h('span', {}, 'Llevas'), h('div', {class:'ayuda', style:'color:inherit;opacity:.8'}, ventas.length + (ventas.length === 1 ? ' venta' : ' ventas') + (ventas.length ? ' · promedio ' + C.dinero(Math.round(q.ventasCup / ventas.length)) : ''))), h('b', {class:'num'}, C.dinero(q.netoCup))),
     h('div', {class:'minis'}, mini('Efectivo', q.porMetodo.efectivo || 0), mini('Transf. y QR', (q.porMetodo.transferencia || 0) + (q.porMetodo.qr || 0)), mini('Fiado', q.porMetodo.fiado || 0), mini('Devuelto', q.devueltoCup)),
-    sinCaptura ? h('button', {class:'card aviso-c', style:'display:block;width:100%;text-align:left', onclick:() => { filtroV = 'transf'; pintar(); }}, h('b', {}, sinCaptura + (sinCaptura === 1 ? ' transferencia sin captura' : ' transferencias sin captura')), h('div', {class:'ayuda', style:'color:inherit'}, 'Mándale la captura al dueño por WhatsApp. Toca para verlas.')) : null,
-    filtros.length > 1 ? h('div', {class:'opts', style:'margin-bottom:10px'}, filtros.map(f => h('button', {class:'op', 'aria-pressed':filtroV === f[0], onclick:() => { filtroV = f[0]; pintar(); }}, f[1]))) : null,
+    sinCaptura ? h('button', {class:'card aviso-c', style:'display:block;width:100%;text-align:left;padding:10px 14px', onclick:() => { filtroV = 'transf'; pintar(); }}, h('b', {}, sinCaptura + (sinCaptura === 1 ? ' transferencia sin captura' : ' transferencias sin captura') + ' · toca para verlas')) : null,
+    filtros.length > 1 ? h('div', {class:'chips'}, filtros.map(f => h('button', {class:'op', 'aria-pressed':filtroV === f[0], onclick:() => { filtroV = f[0]; pintar(); }}, f[1]))) : null,
     lista.length ? h('div', {class:'vlista'}, lista.map(fila)) : h('div', {class:'card'}, ventas.length ? 'No hay ventas con ese filtro.' : 'Todavía no has anotado ventas.'));
 }
 function detalleVenta(v, sol){
@@ -485,7 +485,7 @@ async function enviarCierre(comoMensaje){
   const version = dia.cierreVersion + 1;
   const env = await C.firmarSobre('cierre', perfil, dia.duenoId, {entregaId:dia.entregaId, fecha:dia.fecha, puesto:dia.puesto, vendedorId:perfil.id, vendedorNombre:perfil.nombre, version,
     cerradoEn:Date.now(), fondoCents:dia.fondoCents, ventas, solicitudes:sol, traspasos:Object.values(dia.traspasos || {}), ajustes:dia.ajustes || [], contado:dia.contado, restante, capturas:dia.capturas, ultimoHash:dia.ultimoHash}, llaves.privateKey);
-  const nombre = C.nombreArchivo('cierre', dia.puesto.nombre, dia.fecha, 'v' + version);
+  const nombre = C.nombreArchivo('cierre', dia.puesto.nombre, dia.fecha === C.hoy() ? '' : 'del-' + dia.fecha, 'v' + version);
   let r;
   if(comoMensaje){ r = (await C.copiarTexto(C.sobreATexto(env))) ? 'copiado' : 'cancelado'; if(r === 'cancelado'){ aviso('No se pudo copiar. Usa el botón de arriba para mandarlo como archivo.', true); return; } }
   else r = await C.enviarArchivo(nombre, C.sobreATexto(env));
