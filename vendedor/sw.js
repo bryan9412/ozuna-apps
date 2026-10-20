@@ -1,5 +1,5 @@
 /* Service worker de la vendedora: guarda la app para usarla sin internet y recibe archivos desde «Compartir». */
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const CACHE = 'ozuna-vendedor-' + VERSION;
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const ARCHIVOS = ['./', './index.html', './app.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/tema.js', '../shared/estilos.css', '../icono-192.png', '../icono-512.png'];
@@ -26,8 +26,8 @@ self.addEventListener('fetch', e => {
     return;
   }
   if(r.method !== 'GET' || u.origin !== location.origin) return;
-  e.respondWith(caches.match(r, {ignoreSearch:true}).then(hit => hit || fetch(r).then(resp => {
+  e.respondWith(caches.open(CACHE).then(c0 => c0.match(r, {ignoreSearch:true})).then(hit => hit || fetch(r).then(resp => {
     if(resp && resp.ok){ const copia = resp.clone(); caches.open(CACHE).then(c => c.put(r, copia)); }
     return resp;
-  }).catch(() => caches.match('./index.html'))));
+  }).catch(() => caches.open(CACHE).then(c0 => c0.match('./index.html')))));
 });
