@@ -58,9 +58,27 @@ export function selectorTema(){
   return h('div', {class:'card'}, h('h3', {}, 'Apariencia'), h('p', {class:'ayuda'}, 'Automático usa el modo claro u oscuro del teléfono.'), caja);
 }
 /* Aviso de versión nueva: el service worker nuevo queda esperando hasta que la persona lo acepte. */
+let regSW = null;
+/* Botón «Buscar actualización»: pregunta ya si hay versión nueva (sin esperar a que el navegador lo note) y, si la hay, la instala. */
+export async function buscarActualizacion(){
+  if(!regSW){ aviso('Este navegador no permite actualizar desde aquí. Cierra la app y ábrela con internet.', true); return; }
+  aviso('Buscando…');
+  try { await regSW.update(); } catch(e){ aviso('No se pudo comprobar. ¿Hay internet?', true); return; }
+  if(regSW.installing){
+    const w = regSW.installing;
+    await new Promise(res => { const t = setTimeout(res, 20000); w.addEventListener('statechange', () => { if(w.state === 'installed' || w.state === 'redundant'){ clearTimeout(t); res(); } }); });
+  }
+  if(regSW.waiting && navigator.serviceWorker.controller){ aviso('Hay versión nueva. Actualizando…'); regSW.waiting.postMessage('saltar'); return; }
+  aviso('Ya tienes la última versión.');
+}
+export function tarjetaActualizar(version){
+  return h('div', {class:'card'}, h('h3', {}, 'Actualizar la aplicación'), h('p', {class:'ayuda'}, 'Versión ' + version + '. Con internet, toca el botón y se pone la versión más nueva si hay una.'),
+    h('button', {class:'btn', onclick:buscarActualizacion}, 'Buscar actualización'));
+}
 export function registrarSW(ruta, alHaber){
   if(!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.register(ruta).then(reg => {
+    regSW = reg;
     const esperar = w => w.addEventListener('statechange', () => { if(w.state === 'installed' && navigator.serviceWorker.controller) alHaber(() => w.postMessage('saltar')); });
     if(reg.waiting && navigator.serviceWorker.controller) alHaber(() => reg.waiting.postMessage('saltar'));
     reg.addEventListener('updatefound', () => esperar(reg.installing));

@@ -1,8 +1,8 @@
 /* App de la vendedora: recibe la entrega, anota ventas sin conexión, pide devoluciones y manda el cierre. */
 import * as C from '../shared/core.js';
-import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema } from '../shared/ui.js';
+import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar } from '../shared/ui.js';
 
-const VERSION_APP = '0.3.3';
+const VERSION_APP = '0.3.4';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -502,7 +502,7 @@ async function vMas(){
     h('div', {class:'card'}, h('h3', {}, perfil.nombre), h('p', {class:'ayuda'}, 'Mi huella: ', h('b', {id:'mi-huella'}, '…'), ' (el dueño te la pide para comprobar que eres tú)'), h('p', {class:'ayuda'}, confianza ? 'Enlazada con el dueño «' + confianza.nombre + '» (huella ' + confianza.huella + ').' : 'Todavía no estás enlazada con ningún dueño.'),
       h('button', {class:'btn', onclick:async () => { const r = await C.enviarArchivo(C.nombreArchivo('enlace', perfil.nombre), await enlaceTxt()); if(r === 'descargado') aviso('Se guardó en Descargas. Mándaselo al dueño por WhatsApp.'); }}, 'Mandar mi código de enlace al dueño'),
       h('p', {class:'ayuda'}, 'Solo hace falta una vez. El dueño lo carga en su teléfono y te manda la primera entrega.')),
-    cajaCarga(), selectorTema(),
+    cajaCarga(), selectorTema(), tarjetaActualizar(VERSION_APP),
     h('div', {class:'card'}, h('h3', {}, 'Copia de seguridad'), h('p', {class:'ayuda'}, 'Guarda tus ventas por si se borra el navegador. La copia no incluye tu llave: si recuperas, hay que volver a enlazar con el dueño.'),
       h('button', {class:'btn suave', onclick:async () => { const t = JSON.stringify({ozunaCopia:1, v:1, perfil:{id:perfil.id, nombre:perfil.nombre}, confianza, dia, ventas:await db.todos('ventas'), eventos:await db.todos('eventos')});
         const r = await C.enviarArchivo(C.nombreArchivo('copia-vendedora', perfil.nombre), t); if(r === 'descargado') aviso('Se guardó en Descargas.'); }}, 'Guardar o mandar una copia'),

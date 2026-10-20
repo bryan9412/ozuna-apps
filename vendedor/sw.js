@@ -1,5 +1,5 @@
 /* Service worker de la vendedora: guarda la app para usarla sin internet y recibe archivos desde «Compartir». */
-const VERSION = '0.3.3';
+const VERSION = '0.3.4';
 const CACHE = 'ozuna-vendedor-' + VERSION;
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const ARCHIVOS = ['./', './index.html', './app.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/tema.js', '../shared/estilos.css', '../iconos/ventas-192.png', '../iconos/ventas-512.png', '../iconos/ventas-maskable-512.png'];

@@ -1,6 +1,6 @@
 /* App del dueño: catálogo, entrega del día, recibir cierres y ver el cuadre. Todo sin conexión. */
 import * as C from '../shared/core.js';
-import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema } from '../shared/ui.js';
+import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar } from '../shared/ui.js';
 import { cierresUltimos, eventos, ganancia, costoCup, fiadoPendiente, sumaDias, clave } from './datos.js';
 import { vTraspasos, vCompras, vGastos, vCasa, vConteo, vMerma, vFiado } from './ops.js';
 import { vHistorial, vReportes, exportarExcel } from './reportes.js';
@@ -8,7 +8,7 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.3.3';
+const VERSION_APP = '0.3.4';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -500,7 +500,7 @@ function vEquipo(){
 }
 function vAjustes(){
   const SOLO = ctx.SOLO;
-  montar(raiz, banner(), h('button', {class:'enlace', onclick:ctx.volver}, '‹ Más'), h('h1', {}, 'Ajustes'), selectorTema(),
+  montar(raiz, banner(), h('button', {class:'enlace', onclick:ctx.volver}, '‹ Más'), h('h1', {}, 'Ajustes'), tarjetaActualizar(VERSION_APP), selectorTema(),
     SOLO ? h('div', {class:'card'}, h('h3', {}, 'Copia de consulta'), h('p', {class:'ayuda'}, 'Esta aplicación solo muestra las cuentas. Para ver lo más nuevo, carga una copia reciente que te mande el dueño.'), h('button', {class:'btn', onclick:abrirConsulta}, 'Cargar una copia nueva')) : [
       h('div', {class:'card'}, h('h3', {}, 'Cargar datos del cuestionario'), h('p', {class:'ayuda'}, 'Reemplaza puestos, personas, productos, agregos y gastos con lo que dice el cuestionario.'),
         h('button', {class:'btn suave', onclick:() => hoja('Datos del cuestionario', cerrar => { const ta = h('textarea', {class:'bloque-codigo'}); return h('div', {}, ta, h('button', {class:'btn', onclick:async () => {
