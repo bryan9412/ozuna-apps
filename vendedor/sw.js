@@ -1,0 +1,32 @@
+/* Service worker de la vendedora: guarda la app para usarla sin internet y recibe archivos desde «Compartir». */
+const VERSION = '0.1.0';
+const CACHE = 'ozuna-vendedor-' + VERSION;
+const BANDEJA = 'ozuna-bandeja-vendedor';
+const ARCHIVOS = ['./', './index.html', './app.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/estilos.css', '../icono-192.png', '../icono-512.png'];
+
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS))); });
+self.addEventListener('activate', e => e.waitUntil((async () => {
+  for(const k of await caches.keys()) if(k.startsWith('ozuna-vendedor-') && k !== CACHE) await caches.delete(k);
+  await self.clients.claim();
+})()));
+self.addEventListener('message', e => { if(e.data === 'saltar') self.skipWaiting(); });
+
+self.addEventListener('fetch', e => {
+  const r = e.request, u = new URL(r.url);
+  if(r.method === 'POST' && u.pathname.endsWith('/recibir')){
+    e.respondWith((async () => {
+      try {
+        const fd = await r.formData(); const c = await caches.open(BANDEJA); let i = 0;
+        for(const f of fd.getAll('archivo')) if(f && f.text) await c.put('/bandeja/' + Date.now() + '-' + (i++), new Response(await f.text()));
+        const t = fd.get('texto'); if(t) await c.put('/bandeja/' + Date.now() + '-t', new Response(String(t)));
+      } catch(err){}
+      return Response.redirect(new URL('./?bandeja=1', self.registration.scope).href, 303);
+    })());
+    return;
+  }
+  if(r.method !== 'GET' || u.origin !== location.origin) return;
+  e.respondWith(caches.match(r, {ignoreSearch:true}).then(hit => hit || fetch(r).then(resp => {
+    if(resp && resp.ok){ const copia = resp.clone(); caches.open(CACHE).then(c => c.put(r, copia)); }
+    return resp;
+  }).catch(() => caches.match('./index.html'))));
+});
