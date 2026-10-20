@@ -177,3 +177,6 @@ main.con-barra{padding-bottom:calc(var(--nav-h) + 96px + env(safe-area-inset-bot
 .vrow.atencion{box-shadow:inset 4px 0 0 var(--warn-line)}
 .vm .mp{display:inline-flex;align-items:center;gap:4px}
 .etq.n{background:var(--bg);color:var(--mute);border:1px solid var(--line)}
+[hidden]{display:none!important}
+.chips{scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}

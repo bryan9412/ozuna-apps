@@ -2,7 +2,7 @@
 import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar, icono, avisoAccion } from '../shared/ui.js';
 
-const VERSION_APP = '0.4.0';
+const VERSION_APP = '0.4.1';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -426,7 +426,7 @@ function abrirCobro(){
           dia.clave ? h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'fiado', moneda:'CUP', monto:'', cliente:'', pin:''}); draw(); }}, '+ Fiado') : null));
     };
     const draw = () => {
-      cuerpo.replaceChildren(
+      cuerpo.replaceChildren(...[
         h('div', {class:'total grande'}, h('span', {}, 'Total a cobrar'), h('b', {class:'num'}, C.dinero(total()))),
         h('p', {class:'marca', style:'margin:12px 0 6px'}, 'Cómo paga'),
         h('div', {class:'opts', role:'group', 'aria-label':'Cómo paga'}, modos.map(([id, nombre, ico]) => h('button', {class:'op con-ico', 'aria-pressed':st.modo === id, onclick:() => { fijar(id); draw(); }}, icono(ico, 20), nombre))),
@@ -434,7 +434,7 @@ function abrirCobro(){
         h('label', {class:'lin', style:'cursor:pointer;margin-top:6px'}, h('span', {}, 'Es un pedido a domicilio'), h('input', {type:'checkbox', style:'width:26px;min-height:26px', checked:dom.on, onchange:e => { dom.on = e.target.checked; fijar(st.modo); draw(); }})),
         dom.on ? h('div', {class:'card'}, campo('Dirección', h('input', {value:dom.direccion, oninput:e => dom.direccion = e.target.value, placeholder:'¿A dónde va?'})),
           campo('Cobro del envío (pesos)', h('input', {inputmode:'decimal', value:dom.envio, placeholder:'0', onchange:e => { dom.envio = e.target.value; fijar(st.modo); draw(); }})),
-          (dia.mensajeros || []).length ? campo('Mensajero', h('select', {onchange:e => dom.mensajero = e.target.value}, h('option', {value:''}, 'Elige…'), dia.mensajeros.map(m => h('option', {value:m, selected:m === dom.mensajero}, m)))) : null) : null);
+          (dia.mensajeros || []).length ? campo('Mensajero', h('select', {onchange:e => dom.mensajero = e.target.value}, h('option', {value:''}, 'Elige…'), dia.mensajeros.map(m => h('option', {value:m, selected:m === dom.mensajero}, m)))) : null) : null].filter(Boolean));
       pintaResumen();
     };
     async function guardar(lista){
