@@ -143,7 +143,7 @@ export function nuevaSal(){ const a = new Uint8Array(16); crypto.getRandomValues
 /* ---------- almacenamiento local (IndexedDB) ---------- */
 const TIENDAS = ['kv', 'ventas', 'entregas', 'cierres', 'eventos'];
 export class DB {
-  constructor(nombre){ this.nombre = nombre; this.p = null; }
+  constructor(nombre, opciones){ this.nombre = nombre; this.p = null; this.conMod = !!(opciones && opciones.mod); }
   abrir(){
     if(!this.p) this.p = new Promise((res, rej) => {
       const r = indexedDB.open(this.nombre, 1);
@@ -157,7 +157,8 @@ export class DB {
     return new Promise((res, rej) => { const t = db.transaction(tienda, modo); const q = fn(t.objectStore(tienda)); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
   }
   get(t, id){ return this._tx(t, 'readonly', s => s.get(id)); }
-  put(t, obj){ return this._tx(t, 'readwrite', s => s.put(obj)); }
+  /* Todo registro que no es de configuración lleva la hora de su último cambio (mod); la sincronización entre teléfonos del dueño se basa en eso. */
+  put(t, obj, conservarMod){ if(this.conMod && t !== 'kv' && !conservarMod) obj.mod = Date.now(); return this._tx(t, 'readwrite', s => s.put(obj)); }
   del(t, id){ return this._tx(t, 'readwrite', s => s.delete(id)); }
   todos(t){ return this._tx(t, 'readonly', s => s.getAll()); }
   vaciar(t){ return this._tx(t, 'readwrite', s => s.clear()); }
@@ -179,6 +180,21 @@ export async function enviarArchivo(nombre, texto){
   } catch(e){ if(e && e.name === 'AbortError') return 'cancelado'; }
   descargarTexto(nombre, texto); return 'descargado';
 }
+/* Nombre de archivo que se ordena solo en WhatsApp y en Descargas: Ozuna_cierre_Ozuna_2026-10-21_1630.txt */
+export function nombreArchivo(tipo, ...partes){
+  const d = new Date(); const hora = String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
+  const limpio = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '');
+  return ['Ozuna', tipo, ...partes.filter(Boolean).map(limpio), hoy() + '_' + hora].join('_') + '.txt';
+}
+/* Elegir varios archivos a la vez (el selector de Android abre en «Recientes», donde está lo último que bajó WhatsApp). */
+export function elegirArchivos(){
+  return new Promise(res => {
+    const i = document.createElement('input'); i.type = 'file'; i.multiple = true; i.accept = '.txt,.json,text/plain,application/json';
+    i.onchange = async () => { const out = []; for(const f of i.files) out.push({nombre:f.name, texto:await f.text()}); res(out); };
+    i.addEventListener('cancel', () => res([])); i.click();
+  });
+}
+export async function leerPortapapeles(){ try { return await navigator.clipboard.readText(); } catch(e){ return null; } }
 /* Igual que enviarArchivo, pero para archivos de verdad (Excel, CSV). */
 export async function enviarBlob(nombre, bytes, mime){
   const blob = new Blob([bytes], {type:mime});

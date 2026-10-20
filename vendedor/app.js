@@ -2,7 +2,7 @@
 import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema } from '../shared/ui.js';
 
-const VERSION_APP = '0.2.2';
+const VERSION_APP = '0.3.0';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -56,11 +56,12 @@ function sinEntrega(){
   return true;
 }
 function cajaCarga(){
-  return h('div', {class:'card'}, h('h3', {}, 'Cargar un archivo del dueño'),
-    h('button', {class:'btn', onclick:async () => { const t = await C.elegirArchivo(); if(t) await procesarTexto(t); }}, 'Elegir el archivo que llegó'),
-    h('button', {class:'enlace', onclick:() => pegarTexto()}, 'Me llegó como mensaje: pegarlo'),
-    h('p', {class:'ayuda'}, 'También puedes abrir el archivo en WhatsApp, tocar Compartir y elegir esta aplicación.'));
+  return h('div', {class:'card'}, h('h3', {}, 'Cargar lo que mandó el dueño'),
+    h('button', {class:'btn', onclick:pegarCopiado}, 'Pegar lo que copié de WhatsApp'),
+    h('button', {class:'btn suave', onclick:async () => { const a = await C.elegirArchivos(); if(a.length) await procesarVarios(a.map(x => x.texto)); }}, 'Elegir archivo(s) de Descargas'),
+    h('p', {class:'ayuda'}, 'Lo más rápido: en WhatsApp toca el archivo, elige Compartir y escoge «Ozuna». Si abres el selector de archivos, mira en «Recientes»: ahí sale lo último que bajó WhatsApp. Puedes elegir varios a la vez.'));
 }
+async function pegarCopiado(){ const t = await C.leerPortapapeles(); if(t && C.leerTexto(t)) await procesarTexto(t); else pegarTexto(); }
 function pegarTexto(){
   hoja('Pegar el mensaje', cerrar => {
     const ta = h('textarea', {class:'bloque-codigo', 'aria-label':'Mensaje del dueño'});
@@ -68,9 +69,15 @@ function pegarTexto(){
       h('button', {class:'btn', onclick:async () => { cerrar(); await procesarTexto(ta.value); }}, 'Cargar'));
   });
 }
+/* Varios archivos a la vez: se cargan en el orden en que se crearon, no en el orden en que se eligieron. */
+async function procesarVarios(textos){
+  const lista = []; for(const t of textos){ const e = C.leerTexto(t); if(e) lista.push({e, t}); else aviso('Un archivo no es de Ozuna y se saltó.', true); }
+  lista.sort((a, b) => String(a.e.creado).localeCompare(String(b.e.creado)));
+  for(const x of lista) await procesarTexto(x.t);
+}
 
 /* ---------- recibir archivos ---------- */
-async function revisarBandeja(){ const textos = await C.leerBandeja(BANDEJA); for(const t of textos) await procesarTexto(t); }
+async function revisarBandeja(){ const textos = await C.leerBandeja(BANDEJA); if(textos.length) await procesarVarios(textos); }
 async function procesarTexto(txt){
   const env = C.leerTexto(txt);
   if(!env){ aviso('Eso no es un archivo de Ozuna. Revisa que sea el que te mandaron.', true); return; }
@@ -78,6 +85,7 @@ async function procesarTexto(txt){
   if(!v.ok){ aviso(v.motivo, true); return; }
   if(env.tipo === 'entrega') return cargarEntrega(env);
   if(env.tipo === 'reposicion') return cargarReposicion(env);
+  if(env.tipo === 'ajuste') return cargarAjuste(env);
   if(env.tipo === 'traspaso-salida' || env.tipo === 'traspaso-entrada') return cargarTraspaso(env);
   aviso(env.tipo === 'enlace' || env.tipo === 'cierre' ? 'Ese archivo es para el dueño, no para ti.' : 'Ese archivo no es una entrega.', true);
 }
@@ -93,27 +101,42 @@ async function cargarEntrega(env){
   if(p.dispositivoId !== perfil.id){ aviso('Esta entrega es para otro teléfono.', true); return; }
   if(dia && dia.entregaId === p.entregaId){ aviso('Esa entrega ya está cargada.'); return; }
   if(!(await asegurarConfianza(env))) return;
+  if(dia && dia.creadaEn && env.creado < dia.creadaEn){
+    const si = await confirmar('Esta entrega es más vieja que la que ya tienes', 'La que tienes cargada se creó después. Cargar esta borraría la más nueva.', 'Cargar la vieja igual', 'No, dejar la nueva'); if(!si) return;
+  }
   if(dia && dia.contador > 0 && dia.enviadoHash !== dia.ultimoHash){
     const si = await confirmar('Todavía no mandaste el cierre', 'Tienes ventas del día anterior sin enviar. Si cargas esta entrega ahora, se quedan guardadas pero tendrás que mandar ese cierre después desde un teléfono con la copia.', 'Cargar la entrega igual', 'Primero el cierre');
     if(!si){ ir('cierre'); return; }
   }
   dia = {entregaId:p.entregaId, fecha:p.fecha, puesto:p.puesto, catalogo:p.catalogo, agregos:p.agregos || [], cantidades:p.cantidades || {}, fondoCents:p.fondoCents || 0,
-    tasas:p.tasas || {}, clave:p.clave || null, listas:p.listas || [], mensajeros:p.mensajeros || [], traspasos:{}, ultimoHash:'GENESIS', contador:0, cierreVersion:0, enviadoHash:null, capturas:{}, contado:{}, duenoId:env.de.id};
+    tasas:p.tasas || {}, clave:p.clave || null, listas:p.listas || [], mensajeros:p.mensajeros || [], creadaEn:env.creado, ajustes:[], aplicados:{}, traspasos:{}, ultimoHash:'GENESIS', contador:0, cierreVersion:0, enviadoHash:null, capturas:{}, contado:{}, duenoId:env.de.id};
   limpiarCarrito(); await guardarDia(); aviso('Entrega cargada: ' + p.puesto.nombre); ir('vender');
 }
 async function cargarReposicion(env){
   const p = env.payload;
-  if(!dia || dia.entregaId !== p.entregaId){ aviso('Esta reposición es de otro día. Carga primero la entrega que corresponde.', true); return; }
-  if(p.dispositivoId !== perfil.id){ aviso('Esta reposición es para otro teléfono.', true); return; }
-  if(dia.reposiciones && dia.reposiciones[env.id]){ aviso('Esa reposición ya está cargada.'); return; }
+  if(!dia || dia.entregaId !== p.entregaId){ aviso('Esto es de otro día. Carga primero la entrega que corresponde.', true); return; }
+  if(p.dispositivoId !== perfil.id){ aviso('Esto es para otro teléfono.', true); return; }
+  if(dia.reposiciones && dia.reposiciones[env.id]){ aviso('Eso ya está cargado.'); return; }
+  const soloPrecios = !Object.keys(p.cantidades || {}).length;
   for(const [id, q] of Object.entries(p.cantidades || {})) dia.cantidades[id] = (dia.cantidades[id] || 0) + q;
-  for(const n of p.catalogo || []){ const i = dia.catalogo.findIndex(x => x.id === n.id); if(i >= 0) dia.catalogo[i] = n; else dia.catalogo.push(n); }
+  if(p.catalogoCompleto && p.catalogo) dia.catalogo = p.catalogo;
+  else for(const n of p.catalogo || []){ const i = dia.catalogo.findIndex(x => x.id === n.id); if(i >= 0) dia.catalogo[i] = n; else dia.catalogo.push(n); }
   for(const n of p.agregos || []){ const i = dia.agregos.findIndex(x => x.id === n.id); if(i >= 0) dia.agregos[i] = n; else dia.agregos.push(n); }
   if(p.tasas) dia.tasas = p.tasas;
   if(p.listas) dia.listas = p.listas;
   if(p.mensajeros) dia.mensajeros = p.mensajeros;
   dia.reposiciones = dia.reposiciones || {}; dia.reposiciones[env.id] = Date.now();
-  await guardarDia(); aviso('Reposición cargada'); ir('vender');
+  limpiarCarrito(); await guardarDia(); aviso(soloPrecios ? 'Precios actualizados' : 'Reposición cargada'); ir('vender');
+}
+/* El dueño corrige lo que había mandado (por ejemplo, «eran 4 paquetes pero no había»). Queda anotado y viaja en el cierre. */
+async function cargarAjuste(env){
+  const p = env.payload;
+  if(!dia || dia.entregaId !== p.entregaId){ aviso('Esta corrección es de otro día. Carga primero la entrega que corresponde.', true); return; }
+  if(p.dispositivoId !== perfil.id){ aviso('Esta corrección es para otro teléfono.', true); return; }
+  dia.aplicados = dia.aplicados || {}; if(dia.aplicados[env.id]){ aviso('Esa corrección ya está aplicada.'); return; }
+  dia.ajustes = dia.ajustes || []; const nombres = [];
+  for(const a of p.ajustes){ dia.cantidades[a.productoId] = (dia.cantidades[a.productoId] || 0) + a.deltaMilli; dia.ajustes.push({id:C.uid(), productoId:a.productoId, deltaMilli:a.deltaMilli, motivo:a.motivo || '', por:'dueño', ts:Date.now()}); nombres.push((prod(a.productoId) || {nombre:'un producto'}).nombre); }
+  dia.aplicados[env.id] = Date.now(); await guardarDia(); aviso('El dueño corrigió la existencia de ' + nombres.join(', ') + '.'); pintar();
 }
 
 /* Traspaso entre puestos: el dueño manda una salida al puesto que da y una entrada al que recibe. Cada vendedora confirma la suya al cargarla. */
@@ -164,20 +187,50 @@ function pedirClave(motivo){
   });
 }
 
+let verAgotados = false;
 async function vVender(){
   if(!dia) return sinEntrega();
   const ventas = await ventasDia(); const vend = vendidoMilli(ventas);
-  const tiles = dia.catalogo.map(p => {
-    const rest = (dia.cantidades[p.id] || 0) - (vend[p.id] || 0);
-    const cls = 'prod' + (p.controlStock && rest <= 0 ? ' agotado' : p.controlStock && rest < 3000 ? ' poco' : '');
-    return h('button', {class:cls, onclick:() => tocarProducto(p, rest)},
+  const info = dia.catalogo.map(p => ({p, rest:(dia.cantidades[p.id] || 0) - (vend[p.id] || 0)}));
+  const agotado = x => x.p.controlStock && x.rest <= 0;
+  const visibles = info.filter(x => !agotado(x)), ocultos = info.filter(agotado);
+  const tile = x => {
+    const p = x.p; const cls = 'prod' + (agotado(x) ? ' agotado' : p.controlStock && x.rest < 3000 ? ' poco' : '');
+    return h('button', {class:cls, onclick:() => agotado(x) ? aviso(p.nombre + ' está agotado. Si crees que hay, avisa en «Ver existencia».', true) : tocarProducto(p, x.rest)},
       h('b', {}, p.nombre), h('span', {class:'pr num'}, C.dinero(p.precioCents) + ' la ' + C.nombreMedida(p.medida, 1000)),
-      p.controlStock ? h('span', {class:'qd'}, 'Quedan ' + textoCantidad(p, Math.max(rest, 0))) : null);
-  });
+      p.controlStock ? h('span', {class:'qd'}, agotado(x) ? 'Agotado' : 'Quedan ' + textoCantidad(p, x.rest)) : null);
+  };
   const neto = ventas.reduce((s, v) => s + v.totalCents, 0);
   montar(raiz, banner(), h('p', {class:'marca'}, dia.puesto.nombre + ' · ' + C.fechaBonita(dia.fecha)), h('h1', {}, '¿Qué se vendió?'),
-    dia.catalogo.length ? h('div', {class:'rejilla'}, tiles) : h('div', {class:'card aviso-c'}, 'El dueño todavía no puso productos en la entrega.'),
-    h('div', {class:'total'}, h('span', {}, 'Llevas vendido'), h('b', {class:'num'}, C.dinero(neto))));
+    visibles.length ? h('div', {class:'rejilla'}, visibles.map(tile)) : h('div', {class:'card aviso-c'}, dia.catalogo.length ? 'Todo lo que te mandaron está agotado.' : 'El dueño todavía no puso productos en la entrega.'),
+    ocultos.length ? [h('button', {class:'enlace', onclick:() => { verAgotados = !verAgotados; pintar(); }}, (verAgotados ? 'Ocultar' : 'Ver') + ' agotados (' + ocultos.length + ')'), verAgotados ? h('div', {class:'rejilla'}, ocultos.map(tile)) : null] : null,
+    h('div', {class:'total'}, h('span', {}, 'Llevas vendido'), h('b', {class:'num'}, C.dinero(neto))),
+    dia.catalogo.some(p => p.controlStock) ? h('button', {class:'enlace', onclick:abrirExistencia}, 'Ver existencia y corregir') : null);
+}
+/* Existencia: lo que te dieron, lo vendido y lo que queda. Si hay menos de lo anotado, se corrige aquí y el dueño lo ve en el cierre. */
+async function abrirExistencia(){
+  const ventas = await ventasDia(); const vend = vendidoMilli(ventas);
+  hoja('Existencia', cerrar => {
+    const filas = dia.catalogo.filter(p => p.controlStock).map(p => {
+      const ent = dia.cantidades[p.id] || 0, vd = vend[p.id] || 0, rest = ent - vd;
+      return h('div', {class:'card'}, h('div', {class:'fila'}, h('div', {}, h('b', {}, p.nombre), h('div', {class:'ayuda num'}, 'Te dieron ' + C.cantidad(ent) + ' · vendiste ' + C.cantidad(vd))), h('b', {class:'num ' + (rest <= 0 ? 'mal' : '')}, C.cantidad(rest))),
+        h('button', {class:'enlace', onclick:() => { cerrar(); corregirExistencia(p, rest); }}, 'No hay tanto'));
+    });
+    return h('div', {}, h('p', {class:'ayuda'}, 'Si de verdad hay menos de lo que dice aquí, toca «No hay tanto». Queda anotado para el dueño.'), filas);
+  });
+}
+function corregirExistencia(p, rest){
+  hoja('Corregir ' + p.nombre, cerrar => {
+    const q = h('input', {inputmode:'decimal', placeholder:'0', 'aria-label':'Cuánto hay de verdad'});
+    const motivo = h('select', {}, ['No había tanto desde el principio', 'Se echó a perder', 'Se rompió o se cayó', 'Otro'].map(m => h('option', {}, m)));
+    return h('div', {}, h('p', {class:'ayuda'}, 'Dice que quedan ' + textoCantidad(p, rest) + '.'), campo('¿Cuánto hay de verdad ahora? (' + C.nombreMedida(p.medida, 2000) + ')', q), campo('¿Por qué?', motivo),
+      h('button', {class:'btn', onclick:async () => {
+        const m = C.aMilesimas(q.value); if(isNaN(m) || m < 0){ aviso('Pon cuánto hay de verdad', true); return; }
+        if(m >= rest){ aviso('Aquí solo se puede bajar. Si falta mercancía, pídesela al dueño.', true); return; }
+        dia.cantidades[p.id] = (dia.cantidades[p.id] || 0) + (m - rest); dia.ajustes = dia.ajustes || [];
+        dia.ajustes.push({id:C.uid(), productoId:p.id, deltaMilli:m - rest, motivo:motivo.value, por:'vendedora', ts:Date.now()}); await guardarDia(); cerrar(); aviso('Anotado. El dueño lo verá en tu cierre.'); pintar();
+      }}, 'Guardar'));
+  });
 }
 function tocarProducto(p, rest){
   const peso = C.MEDIDAS[p.medida] && C.MEDIDAS[p.medida].peso;
@@ -326,26 +379,50 @@ function abrirCobro(){
   });
 }
 
-/* ---------- ventas del día, devoluciones y transferencias ---------- */
+/* ---------- ventas del día ----------
+   Arriba el total y lo que importa; filtros por cómo pagaron; filas compactas (una venta = una línea) y el detalle en una hoja al tocar. */
+let filtroV = 'todas';
+const NOMBRE_PAGO = {efectivo:'Efectivo', transferencia:'Transferencia', qr:'QR', fiado:'Fiado'};
 async function vVentas(){
   if(!dia) return sinEntrega();
   const ventas = await ventasDia(), sol = await solicitudesDia(); const q = C.calcularCuadre(ventas, sol, dia.fondoCents);
-  const lista = ventas.slice().reverse().map(v => {
-    const s = sol.filter(x => x.ventaId === v.id);
-    return h('div', {class:'card'}, h('div', {class:'fila top'}, h('div', {}, h('b', {}, ticket(v.num) + ' · ' + C.horaDe(v.ts)),
-        h('div', {class:'ayuda'}, v.lineas.map(l => l.nombre + ' ×' + C.cantidad(l.qtyMilli)).join(', ')),
-        v.domicilio ? h('div', {class:'etq'}, 'Domicilio · ' + v.domicilio.direccion) : null,
-        h('div', {class:'ayuda'}, v.pagos.map(p => (p.metodo === 'efectivo' ? 'Efectivo ' + p.moneda : p.metodo === 'qr' ? 'QR' : p.metodo === 'fiado' ? 'Fiado (' + p.cliente + ')' : 'Transferencia')).join(' + '))),
-        h('b', {class:'num'}, C.dinero(v.totalCents))),
-      s.map(x => h('div', {class:'etq warn', style:'margin-top:6px'}, (x.tipo === 'devolucion' ? 'Devolución pedida' : 'Anulación pedida') + ' · ' + C.dinero(x.efectivoDevueltoCents) + ' devueltos')),
-      h('button', {class:'enlace', onclick:() => pedirDevolucion(v)}, 'Devolver o anular esta venta'));
+  const tiene = (v, ...ms) => v.pagos.some(p => ms.includes(p.metodo));
+  const metodoCorto = v => { const ms = [...new Set(v.pagos.map(p => p.metodo))]; return ms.length > 1 ? 'Mixto' : ms[0] === 'transferencia' ? 'Transf.' : NOMBRE_PAGO[ms[0]]; };
+  const filtros = [['todas', 'Todas', () => true], ['efectivo', 'Efectivo', v => tiene(v, 'efectivo')], ['transf', 'Transf. y QR', v => tiene(v, 'transferencia', 'qr')], ['fiado', 'Fiado', v => tiene(v, 'fiado')], ['pedidos', 'Con pedido', v => sol.some(s => s.ventaId === v.id)]]
+    .filter(f => f[0] === 'todas' || ventas.some(f[2]));
+  if(!filtros.some(f => f[0] === filtroV)) filtroV = 'todas';
+  const activo = filtros.find(f => f[0] === filtroV)[2];
+  const lista = ventas.filter(activo).slice().reverse();
+  const sinCaptura = q.transferencias.filter(t => !dia.capturas[t.ventaId]).length;
+  const mini = (t, v) => v ? h('div', {class:'mini'}, h('span', {}, t), h('b', {class:'num'}, C.dinero(v))) : null;
+  const resumenProductos = v => { const n = v.lineas.map(l => l.nombre + (l.qtyMilli === 1000 ? '' : ' ×' + C.cantidad(l.qtyMilli))); return n.length > 2 ? n.slice(0, 2).join(', ') + ' +' + (n.length - 2) : n.join(', '); };
+  const fila = v => {
+    const pedido = sol.some(s => s.ventaId === v.id), especial = v.lineas.some(l => l.lista);
+    return h('button', {class:'vrow', onclick:() => detalleVenta(v, sol)},
+      h('div', {class:'vt'}, h('b', {}, ticket(v.num)), h('span', {class:'ayuda'}, C.horaDe(v.ts))),
+      h('div', {class:'vd'}, h('span', {}, resumenProductos(v)), (v.domicilio || especial || pedido) ? h('span', {class:'vtags'}, v.domicilio ? h('span', {class:'etq'}, 'Domicilio') : null, especial ? h('span', {class:'etq'}, 'Precio especial') : null, pedido ? h('span', {class:'etq warn'}, 'Pedido') : null) : null),
+      h('div', {class:'vm'}, h('b', {class:'num'}, C.dinero(v.totalCents)), h('span', {class:'ayuda'}, metodoCorto(v))));
+  };
+  montar(raiz, banner(), h('p', {class:'marca'}, dia.puesto.nombre + ' · ' + C.fechaBonita(dia.fecha)), h('h1', {}, 'Ventas de hoy'),
+    h('div', {class:'total'}, h('div', {}, h('span', {}, 'Llevas'), h('div', {class:'ayuda', style:'color:inherit;opacity:.8'}, ventas.length + (ventas.length === 1 ? ' venta' : ' ventas') + (ventas.length ? ' · promedio ' + C.dinero(Math.round(q.ventasCup / ventas.length)) : ''))), h('b', {class:'num'}, C.dinero(q.netoCup))),
+    h('div', {class:'minis'}, mini('Efectivo', q.porMetodo.efectivo || 0), mini('Transf. y QR', (q.porMetodo.transferencia || 0) + (q.porMetodo.qr || 0)), mini('Fiado', q.porMetodo.fiado || 0), mini('Devuelto', q.devueltoCup)),
+    sinCaptura ? h('button', {class:'card aviso-c', style:'display:block;width:100%;text-align:left', onclick:() => { filtroV = 'transf'; pintar(); }}, h('b', {}, sinCaptura + (sinCaptura === 1 ? ' transferencia sin captura' : ' transferencias sin captura')), h('div', {class:'ayuda', style:'color:inherit'}, 'Mándale la captura al dueño por WhatsApp. Toca para verlas.')) : null,
+    filtros.length > 1 ? h('div', {class:'opts', style:'margin-bottom:10px'}, filtros.map(f => h('button', {class:'op', 'aria-pressed':filtroV === f[0], onclick:() => { filtroV = f[0]; pintar(); }}, f[1]))) : null,
+    lista.length ? h('div', {class:'vlista'}, lista.map(fila)) : h('div', {class:'card'}, ventas.length ? 'No hay ventas con ese filtro.' : 'Todavía no has anotado ventas.'));
+}
+function detalleVenta(v, sol){
+  hoja(ticket(v.num) + ' · ' + C.horaDe(v.ts), cerrar => {
+    const pedidos = sol.filter(s => s.ventaId === v.id); const trans = v.pagos.some(p => p.metodo === 'transferencia' || p.metodo === 'qr');
+    return h('div', {},
+      h('div', {class:'card'}, v.lineas.map(l => h('div', {class:'lin'}, h('span', {}, l.nombre, h('div', {class:'d num'}, C.cantidad(l.qtyMilli) + ' × ' + C.dinero(l.precioCents) + (l.lista ? ' · precio especial' : '') + (l.agregos && l.agregos.length ? ' · ' + l.agregos.map(a => a.nombre + ' ×' + a.cant).join(', ') : ''))), h('b', {class:'num'}, C.dinero(l.importeCents + (l.agregos || []).reduce((s, a) => s + a.precioCents * a.cant, 0))))),
+        h('div', {class:'lin'}, h('b', {}, 'Total'), h('b', {class:'num'}, C.dinero(v.totalCents)))),
+      h('div', {class:'card'}, h('h3', {}, 'Cómo pagó'), v.pagos.map(p => h('div', {class:'lin'}, h('span', {}, (NOMBRE_PAGO[p.metodo] || p.metodo) + (p.metodo === 'efectivo' ? ' ' + p.moneda : '') + (p.cliente ? ' · ' + p.cliente : '')), h('b', {class:'num'}, C.dinero(p.monto) + (p.moneda !== 'CUP' ? ' ' + p.moneda : '')))),
+        v.vueltoCents ? h('div', {class:'lin'}, h('span', {}, 'Vuelto'), h('b', {class:'num'}, C.dinero(v.vueltoCents))) : null),
+      v.domicilio ? h('div', {class:'card'}, h('h3', {}, 'Domicilio'), h('p', {}, v.domicilio.direccion), v.domicilio.mensajero ? h('p', {class:'ayuda'}, 'Mensajero: ' + v.domicilio.mensajero) : null) : null,
+      pedidos.map(s => h('div', {class:'card aviso-c'}, h('b', {}, (s.tipo === 'devolucion' ? 'Devolución' : 'Anulación') + ' pedida'), h('div', {}, s.motivo + ' · devolviste ' + C.dinero(s.efectivoDevueltoCents)))),
+      trans ? h('label', {class:'lin', style:'cursor:pointer'}, h('span', {}, 'Ya mandé la captura al dueño'), h('input', {type:'checkbox', style:'width:26px;min-height:26px', checked:!!dia.capturas[v.id], onchange:async e => { dia.capturas[v.id] = e.target.checked; await guardarDia(); pintar(); }})) : null,
+      h('button', {class:'btn suave', onclick:() => { cerrar(); pedirDevolucion(v); }}, 'Devolver o anular esta venta'));
   });
-  const trans = q.transferencias.map(t => h('label', {class:'lin', style:'cursor:pointer'}, h('span', {}, ticket(t.num) + ' · ' + C.horaDe(t.hora) + ' · ' + (t.metodo === 'qr' ? 'QR' : 'Transferencia'), h('div', {class:'d num'}, C.dinero(t.cup))),
-    h('span', {}, 'Ya mandé la captura ', h('input', {type:'checkbox', style:'width:26px;min-height:26px;vertical-align:middle', checked:!!dia.capturas[t.ventaId], onchange:async e => { dia.capturas[t.ventaId] = e.target.checked; await guardarDia(); }}))));
-  montar(raiz, banner(), h('p', {class:'marca'}, dia.puesto.nombre), h('h1', {}, 'Ventas de hoy'),
-    h('div', {class:'total'}, h('span', {}, ventas.length + (ventas.length === 1 ? ' venta' : ' ventas')), h('b', {class:'num'}, C.dinero(q.netoCup))),
-    trans.length ? h('div', {class:'card'}, h('h3', {}, 'Transferencias y QR'), h('p', {class:'ayuda'}, 'Manda la captura de cada una al dueño por WhatsApp y márcala.'), trans) : null,
-    h('h2', {}, 'Cada venta'), lista.length ? lista : h('div', {class:'card'}, 'Todavía no has anotado ventas.'));
 }
 function pedirDevolucion(v){
   hoja('Devolver o anular ' + ticket(v.num), cerrar => {
@@ -394,9 +471,11 @@ async function vCierre(){
       q.porMetodo.fiado ? h('div', {class:'lin'}, h('span', {}, 'Fiado'), h('b', {class:'num'}, C.dinero(q.porMetodo.fiado))) : null),
     cajas, stock.length ? h('div', {class:'card tabla'}, h('h3', {}, 'Lo que queda'), h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Producto'), h('th', {}, 'Entregado'), h('th', {}, 'Vendido'), h('th', {}, 'Queda'))), h('tbody', {}, stock))) : null,
     dia.enviadoHash ? h('div', {class:'card ' + (cambiado ? 'aviso-c' : '')}, h('b', {}, cambiado ? 'Anotaste ventas después de mandar el cierre. Mándalo otra vez.' : 'Cierre mandado ✓ (versión ' + dia.cierreVersion + ')')) : null,
-    h('button', {class:'btn', onclick:enviarCierre}, dia.enviadoHash ? 'Mandar el cierre otra vez' : 'Mandar el cierre al dueño'));
+    (dia.ajustes || []).length ? h('div', {class:'card'}, h('h3', {}, 'Correcciones de existencia'), dia.ajustes.map(a => { const p = prod(a.productoId); return h('div', {class:'lin'}, h('span', {}, (p ? p.nombre : 'Producto'), h('div', {class:'d'}, a.por + ' · ' + a.motivo)), h('b', {class:'num ' + (a.deltaMilli < 0 ? 'mal' : 'bien')}, (a.deltaMilli > 0 ? '+' : '') + C.cantidad(a.deltaMilli))); })) : null,
+    h('button', {class:'btn', onclick:() => enviarCierre(false)}, dia.enviadoHash ? 'Mandar el cierre otra vez' : 'Mandar el cierre al dueño'),
+    h('button', {class:'enlace', onclick:() => enviarCierre(true)}, 'o copiarlo como mensaje para pegarlo en el chat'));
 }
-async function enviarCierre(){
+async function enviarCierre(comoMensaje){
   if(!confianza){ aviso('Primero carga una entrega del dueño.', true); return; }
   const ventas = await ventasDia(), sol = await solicitudesDia();
   if(dia.contado.CUP == null){
@@ -405,12 +484,14 @@ async function enviarCierre(){
   const restante = {}; const vend = vendidoMilli(ventas); for(const p of dia.catalogo) if(p.controlStock) restante[p.id] = {entregado:dia.cantidades[p.id] || 0, vendido:vend[p.id] || 0};
   const version = dia.cierreVersion + 1;
   const env = await C.firmarSobre('cierre', perfil, dia.duenoId, {entregaId:dia.entregaId, fecha:dia.fecha, puesto:dia.puesto, vendedorId:perfil.id, vendedorNombre:perfil.nombre, version,
-    cerradoEn:Date.now(), fondoCents:dia.fondoCents, ventas, solicitudes:sol, traspasos:Object.values(dia.traspasos || {}), contado:dia.contado, restante, capturas:dia.capturas, ultimoHash:dia.ultimoHash}, llaves.privateKey);
-  const nombre = 'cierre-' + dia.puesto.nombre.replace(/[^\wáéíóúñ]+/gi, '-').toLowerCase() + '-' + dia.fecha + '-v' + version + '.txt';
-  const r = await C.enviarArchivo(nombre, C.sobreATexto(env));
+    cerradoEn:Date.now(), fondoCents:dia.fondoCents, ventas, solicitudes:sol, traspasos:Object.values(dia.traspasos || {}), ajustes:dia.ajustes || [], contado:dia.contado, restante, capturas:dia.capturas, ultimoHash:dia.ultimoHash}, llaves.privateKey);
+  const nombre = C.nombreArchivo('cierre', dia.puesto.nombre, dia.fecha, 'v' + version);
+  let r;
+  if(comoMensaje){ r = (await C.copiarTexto(C.sobreATexto(env))) ? 'copiado' : 'cancelado'; if(r === 'cancelado'){ aviso('No se pudo copiar. Usa el botón de arriba para mandarlo como archivo.', true); return; } }
+  else r = await C.enviarArchivo(nombre, C.sobreATexto(env));
   if(r === 'cancelado') return;
   dia.cierreVersion = version; dia.enviadoHash = dia.ultimoHash; await guardarDia();
-  aviso(r === 'compartido' ? 'Listo. Si lo mandaste por WhatsApp, ya llegó.' : 'Se guardó en Descargas. En WhatsApp: clip, Documento, y elígelo.');
+  aviso(r === 'compartido' ? 'Listo. Si lo mandaste por WhatsApp, ya llegó.' : r === 'copiado' ? 'Copiado. Abre el chat del dueño, toca Pegar y envía.' : 'Se guardó en Descargas como «' + nombre + '». En WhatsApp: clip, Documento, y elige el de la hora más reciente.');
   pintar();
 }
 
@@ -419,12 +500,12 @@ async function vMas(){
   const enlaceTxt = async () => C.sobreATexto(await C.firmarSobre('enlace', perfil, null, {nombre:perfil.nombre}, llaves.privateKey));
   montar(raiz, banner(), h('h1', {}, 'Más'),
     h('div', {class:'card'}, h('h3', {}, perfil.nombre), h('p', {class:'ayuda'}, 'Mi huella: ', h('b', {id:'mi-huella'}, '…'), ' (el dueño te la pide para comprobar que eres tú)'), h('p', {class:'ayuda'}, confianza ? 'Enlazada con el dueño «' + confianza.nombre + '» (huella ' + confianza.huella + ').' : 'Todavía no estás enlazada con ningún dueño.'),
-      h('button', {class:'btn', onclick:async () => { const r = await C.enviarArchivo('enlace-' + perfil.nombre.toLowerCase().replace(/\W+/g, '-') + '.txt', await enlaceTxt()); if(r === 'descargado') aviso('Se guardó en Descargas. Mándaselo al dueño por WhatsApp.'); }}, 'Mandar mi código de enlace al dueño'),
+      h('button', {class:'btn', onclick:async () => { const r = await C.enviarArchivo(C.nombreArchivo('enlace', perfil.nombre), await enlaceTxt()); if(r === 'descargado') aviso('Se guardó en Descargas. Mándaselo al dueño por WhatsApp.'); }}, 'Mandar mi código de enlace al dueño'),
       h('p', {class:'ayuda'}, 'Solo hace falta una vez. El dueño lo carga en su teléfono y te manda la primera entrega.')),
     cajaCarga(), selectorTema(),
     h('div', {class:'card'}, h('h3', {}, 'Copia de seguridad'), h('p', {class:'ayuda'}, 'Guarda tus ventas por si se borra el navegador. La copia no incluye tu llave: si recuperas, hay que volver a enlazar con el dueño.'),
       h('button', {class:'btn suave', onclick:async () => { const t = JSON.stringify({ozunaCopia:1, v:1, perfil:{id:perfil.id, nombre:perfil.nombre}, confianza, dia, ventas:await db.todos('ventas'), eventos:await db.todos('eventos')});
-        const r = await C.enviarArchivo('copia-vendedor-' + C.hoy() + '.txt', t); if(r === 'descargado') aviso('Se guardó en Descargas.'); }}, 'Guardar o mandar una copia'),
+        const r = await C.enviarArchivo(C.nombreArchivo('copia-vendedora', perfil.nombre), t); if(r === 'descargado') aviso('Se guardó en Descargas.'); }}, 'Guardar o mandar una copia'),
       h('button', {class:'btn suave', onclick:restaurar}, 'Recuperar una copia')),
     h('p', {class:'ayuda'}, 'Ozuna Vendedora · versión ' + VERSION_APP));
   C.huella(perfil.pub).then(f => { const e = document.getElementById('mi-huella'); if(e) e.textContent = f; });
