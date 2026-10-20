@@ -1,8 +1,8 @@
 /* Service worker de la vendedora: guarda la app para usarla sin internet y recibe archivos desde «Compartir». */
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const CACHE = 'ozuna-vendedor-' + VERSION;
 const BANDEJA = 'ozuna-bandeja-vendedor';
-const ARCHIVOS = ['./', './index.html', './app.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/tema.js', '../shared/estilos.css', '../icono-192.png', '../icono-512.png'];
+const ARCHIVOS = ['./', './index.html', './app.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/tema.js', '../shared/estilos.css', '../iconos/ventas-192.png', '../iconos/ventas-512.png', '../iconos/ventas-maskable-512.png'];
 
 /* cache:'reload' evita guardar copias viejas que el navegador tenga en su caché HTTP (GitHub Pages las deja 10 minutos). */
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS.map(u => new Request(u, {cache:'reload'}))))); });

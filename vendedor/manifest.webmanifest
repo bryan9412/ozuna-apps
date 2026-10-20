@@ -1,6 +1,6 @@
 {
-  "name": "Ozuna Vendedora",
-  "short_name": "Ozuna",
+  "name": "Ozuna Ventas",
+  "short_name": "Ozuna Ventas",
   "lang": "es",
   "start_url": "./",
   "scope": "./",
@@ -9,8 +9,9 @@
   "background_color": "#F2F5F4",
   "theme_color": "#0E6A5B",
   "icons": [
-    {"src": "../icono-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-    {"src": "../icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+    {"src": "../iconos/ventas-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "../iconos/ventas-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "../iconos/ventas-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
   ],
   "share_target": {
     "action": "./recibir",

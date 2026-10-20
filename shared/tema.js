@@ -5,7 +5,7 @@ function esOscuro(){ const r = document.documentElement; return r.dataset.theme 
 export function aplicarTema(t){
   t = t || temaGuardado(); const r = document.documentElement;
   if(t === 'auto') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', t === 'oscuro' ? 'dark' : 'light');
-  const m = document.querySelector('meta[name="theme-color"]'); if(m) m.content = esOscuro() ? '#0F1614' : '#0E6A5B';
+  const m = document.querySelector('meta[name="theme-color"]'); if(m) m.content = esOscuro() ? '#0F1614' : (m.dataset.claro || '#0E6A5B');
 }
 export function guardarTema(t){ try { if(t === 'auto') localStorage.removeItem(KEY); else localStorage.setItem(KEY, t); } catch(e){} aplicarTema(t); }
 try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if(temaGuardado() === 'auto') aplicarTema('auto'); }); } catch(e){}
