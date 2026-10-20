@@ -8,7 +8,7 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.4.5';
+const VERSION_APP = '0.4.6';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -507,6 +507,7 @@ function vAjustes(){
         h('button', {class:'btn suave', onclick:() => hoja('Datos del cuestionario', cerrar => { const ta = h('textarea', {class:'bloque-codigo'}); return h('div', {}, ta, h('button', {class:'btn', onclick:async () => {
           if(!(await confirmar('¿Reemplazar tus datos?', 'Se cambian los puestos, personas y productos actuales.', 'Reemplazar', 'Cancelar'))) return;
           const r = desdeCuestionario(ta.value); if(r){ aviso(r, true); return; } await guardarN(); cerrar(); aviso('Datos cargados'); pintar(); }}, 'Cargar')); })}, 'Pegar el cuestionario')),
+      h('div', {class:'card'}, h('h3', {}, '¿Quién usa este teléfono?'), h('p', {class:'ayuda'}, 'Ahora: «' + perfil.nombre + '». Sale en los nombres de los archivos que mandes, para saber de quién son. La llave es la misma del dueño; esto solo identifica a la persona.'), h('button', {class:'btn suave', onclick:() => quienSoy(true)}, 'Cambiar el nombre')),
       h('div', {class:'card'}, h('h3', {}, 'Copia de seguridad'), h('p', {class:'ayuda'}, 'Incluye tu llave y todos tus datos. Guárdala solo para ti (mándatela a ti mismo): quien la tenga puede firmar como tú. La misma copia sirve para que tu familia vea las cuentas en su teléfono.'),
         N.ultimaCopia ? h('p', {class:'ayuda'}, 'Última copia: ' + N.ultimaCopia.slice(0, 10)) : null,
         h('button', {class:'btn suave', onclick:copiar}, 'Guardar o mandar una copia'), h('button', {class:'btn suave', onclick:restaurar}, 'Recuperar una copia')),
@@ -572,6 +573,16 @@ async function restaurar(){
   llaves = {privateKey:await C.importarPrivada(d.llave), pub:d.perfil.pub}; perfil = d.perfil; N = d.negocio;
   await db.kvSet('llaves', llaves); await db.kvSet('perfil', perfil); await guardarN(); await cargarDatosCopia(d);
   desbloqueado = true; pantalla = 'hoy'; masSub = null; aviso('Copia recuperada'); pintar();
+  await quienSoy(false);
+}
+/* 20/10/2026: la copia trae el nombre del dueño; en el teléfono de otra persona de la familia se pone su propio nombre (la llave sigue siendo la misma). */
+function quienSoy(editando){
+  return new Promise(res => hoja(editando ? 'Nombre en este teléfono' : '¿Quién usa este teléfono?', cerrar => {
+    const n = h('input', {value:editando ? perfil.nombre : '', placeholder:'Tu nombre'});
+    return h('div', {}, h('p', {class:'ayuda'}, editando ? '' : 'Esta copia es la del dueño. Escribe tu nombre para que sus archivos digan de quién son (por ejemplo, Yelenis). Si este es el teléfono del dueño, déjalo como está.'), campo('Nombre', n),
+      h('button', {class:'btn', onclick:async () => { const v = n.value.trim(); if(!v){ aviso('Escribe un nombre', true); return; } perfil.nombre = v; await db.kvSet('perfil', perfil); cerrar(); aviso('Listo, este teléfono es de ' + v); pintar(); }}, 'Guardar'),
+      editando ? null : h('button', {class:'btn suave', onclick:cerrar}, 'Dejarlo como está'));
+  }, () => res()));
 }
 /* Modo consulta: sin llave, solo para ver cierres, historial y reportes. Sirve para la familia. */
 async function abrirConsulta(){
