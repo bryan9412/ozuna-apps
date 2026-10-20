@@ -16,6 +16,13 @@
 <div id="carrito"></div>
 <div id="navbox"></div>
 <noscript>Esta aplicación necesita JavaScript.</noscript>
+<script>
+/* Red de seguridad: si la app no arranca en 7 segundos, ofrece repararla sin tocar los datos (ventas, cierres). */
+setTimeout(function(){ var a = document.getElementById('app'); if(!a || !/Cargando/.test(a.textContent)) return;
+  a.innerHTML = '<h1>No terminó de cargar</h1><p class="ayuda">Toca el botón para repararla. No pierdes tus ventas.</p><button class="btn" id="reparar">Reparar y volver a abrir</button>';
+  document.getElementById('reparar').onclick = async function(){ try { var rs = await navigator.serviceWorker.getRegistrations(); for(var r of rs) if(r.scope.indexOf('/vendedor/') > -1) await r.unregister();
+    var ks = await caches.keys(); for(var k of ks) if(k.indexOf('ozuna-vendedor-') === 0) await caches.delete(k); } catch(e){} location.reload(); }; }, 7000);
+</script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -6,7 +6,7 @@ import { vTraspasos, vCompras, vGastos, vCasa, vConteo, vMerma, vFiado } from '.
 import { vHistorial, vReportes, exportarExcel } from './reportes.js';
 import { abrirFicha } from './ficha.js';
 
-const VERSION_APP = '0.2.0';
+const VERSION_APP = '0.2.1';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno');
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;

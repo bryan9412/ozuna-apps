@@ -1,10 +1,11 @@
 /* Service worker del dueño: guarda la app para usarla sin internet y recibe archivos desde «Compartir». */
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const CACHE = 'ozuna-dueno-' + VERSION;
 const BANDEJA = 'ozuna-bandeja-dueno';
 const ARCHIVOS = ['./', './index.html', './app.js', './datos.js', './ops.js', './reportes.js', './ficha.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/tema.js', '../shared/xlsx.js', '../shared/estilos.css', '../icono-192.png', '../icono-512.png'];
 
-self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS))); });
+/* cache:'reload' evita guardar copias viejas que el navegador tenga en su caché HTTP (GitHub Pages las deja 10 minutos). */
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS.map(u => new Request(u, {cache:'reload'}))))); });
 self.addEventListener('activate', e => e.waitUntil((async () => {
   for(const k of await caches.keys()) if(k.startsWith('ozuna-dueno-') && k !== CACHE) await caches.delete(k);
   await self.clients.claim();
