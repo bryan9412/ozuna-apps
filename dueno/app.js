@@ -8,7 +8,7 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.4.2';
+const VERSION_APP = '0.4.3';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -552,7 +552,13 @@ async function copiar(){
 async function leerCopia(){
   const t = await C.elegirArchivo(); if(!t) return null;
   let d; try { d = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch(e){}
-  if(!d || d.ozunaCopia !== 1 || d.tipo !== 'dueno'){ aviso('Ese archivo no es una copia del dueño.', true); return null; }
+  if(!d || d.ozunaCopia !== 1 || d.tipo !== 'dueno'){
+    /* 20/10/2026: «Mandar todo» de Sincronizar genera un paquete de cambios (Ozuna_sync-completo…), que NO es la copia completa; se confundían. */
+    const env = C.leerTexto(t);
+    if(env && env.tipo === 'sync') aviso('Ese archivo es un paquete de Sincronizar, no la copia. En el teléfono del dueño: Más → Ajustes y copia → «Guardar o mandar una copia».', true);
+    else aviso('Ese archivo no es una copia del dueño.', true);
+    return null;
+  }
   return d;
 }
 async function cargarDatosCopia(d){
