@@ -179,6 +179,16 @@ export async function enviarArchivo(nombre, texto){
   } catch(e){ if(e && e.name === 'AbortError') return 'cancelado'; }
   descargarTexto(nombre, texto); return 'descargado';
 }
+/* Igual que enviarArchivo, pero para archivos de verdad (Excel, CSV). */
+export async function enviarBlob(nombre, bytes, mime){
+  const blob = new Blob([bytes], {type:mime});
+  try {
+    const f = new File([blob], nombre, {type:mime});
+    if(navigator.canShare && navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:nombre}); return 'compartido'; }
+  } catch(e){ if(e && e.name === 'AbortError') return 'cancelado'; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return 'descargado';
+}
 export async function copiarTexto(texto){
   try { await navigator.clipboard.writeText(texto); return true; } catch(e){
     const ta = document.createElement('textarea'); ta.value = texto; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select();

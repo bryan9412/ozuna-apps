@@ -1,12 +1,17 @@
 /* App del dueño: catálogo, entrega del día, recibir cierres y ver el cuadre. Todo sin conexión. */
 import * as C from '../shared/core.js';
-import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW } from '../shared/ui.js';
+import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema } from '../shared/ui.js';
+import { cierresUltimos, eventos, ganancia, costoCup, fiadoPendiente, sumaDias } from './datos.js';
+import { vTraspasos, vCompras, vGastos, vCasa, vConteo, vMerma, vFiado } from './ops.js';
+import { vHistorial, vReportes, exportarExcel } from './reportes.js';
+import { abrirFicha } from './ficha.js';
 
-const VERSION_APP = '0.1.0';
+const VERSION_APP = '0.2.0';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno');
-let perfil, llaves, N, pantalla = 'hoy', fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
-const NAV = [['hoy', '📊', 'Hoy'], ['entrega', '📦', 'Entrega'], ['cierres', '✅', 'Cierres'], ['catalogo', '🏷️', 'Catálogo'], ['mas', '⚙️', 'Más']];
+let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
+const NAV_TODO = [['hoy', '📊', 'Hoy'], ['entrega', '📦', 'Entrega'], ['cierres', '✅', 'Cierres'], ['catalogo', '🏷️', 'Catálogo'], ['mas', '⚙️', 'Más']];
+const NAV_SOLO = [['hoy', '📊', 'Hoy'], ['cierres', '✅', 'Cierres'], ['mas', '⚙️', 'Más']];
 const raiz = document.getElementById('app');
 const ticket = n => 'T-' + String(n).padStart(3, '0');
 const guardarN = () => db.kvSet('negocio', N);
@@ -60,7 +65,9 @@ function bienvenida(){
       if(cues.value.trim()){ const r = desdeCuestionario(cues.value); if(r) aviso(r, true); else aviso('Datos del cuestionario cargados.'); }
       await db.kvSet('llaves', llaves); await db.kvSet('perfil', perfil); await guardarN(); C.pedirPersistencia();
       desbloqueado = true; pantalla = 'hoy'; pintar();
-    }}, 'Empezar'));
+    }}, 'Empezar'),
+    h('div', {class:'card', style:'margin-top:18px'}, h('h3', {}, '¿Eres de la familia?'), h('p', {class:'ayuda'}, 'Si solo quieres ver las cuentas, carga la copia que te mande el dueño. No podrás cambiar nada.'),
+      h('button', {class:'btn suave', onclick:abrirConsulta}, 'Cargar una copia para ver')));
   montar(document.getElementById('navbox'));
 }
 /* Devuelve null si todo bien, o el texto del problema. */
@@ -82,12 +89,18 @@ function desdeCuestionario(txt){
 
 /* ---------- pintado ---------- */
 function pintar(){
+  const solo = !!(perfil && perfil.consulta);
+  if(solo && (pantalla === 'entrega' || pantalla === 'catalogo')) pantalla = 'hoy';
   const v = {hoy:vHoy, entrega:vEntrega, cierres:vCierres, catalogo:vCatalogo, mas:vMas};
   (v[pantalla] || vHoy)();
-  montar(document.getElementById('navbox'), barraNav(NAV, pantalla, p => { pantalla = p; reporteId = null; pintar(); window.scrollTo(0, 0); }));
+  montar(document.getElementById('navbox'), barraNav(solo ? NAV_SOLO : NAV_TODO, pantalla, p => { pantalla = p; reporteId = null; masSub = null; pintar(); window.scrollTo(0, 0); }));
 }
 const banner = () => hayVersionNueva ? h('div', {class:'banner'}, 'Hay una versión nueva', h('button', {onclick:hayVersionNueva}, 'Actualizar')) : null;
 const filaDato = (t, v, cls) => h('div', {class:'lin'}, h('span', {}, t), h('b', {class:'num ' + (cls || '')}, v));
+/* Lo que comparten las pantallas que viven en otros archivos (ops.js, reportes.js, ficha.js). */
+const ctx = {db, get N(){ return N; }, get perfil(){ return perfil; }, get llaves(){ return llaves; }, get SOLO(){ return !!(perfil && perfil.consulta); }, get raiz(){ return raiz; },
+  guardarN, pintar, selector, puesto, nomPuesto, banner, filaDato,
+  volver(){ masSub = null; pintar(); window.scrollTo(0, 0); }, ir(s){ masSub = s; pintar(); window.scrollTo(0, 0); }};
 async function revisarBandeja(){ for(const t of await C.leerBandeja(BANDEJA)) await procesarTexto(t); }
 function cajaCarga(titulo, ayuda){
   return h('div', {class:'card'}, h('h3', {}, titulo), ayuda ? h('p', {class:'ayuda'}, ayuda) : null,
@@ -98,6 +111,7 @@ function cajaCarga(titulo, ayuda){
 async function procesarTexto(txt){
   const env = C.leerTexto(txt);
   if(!env){ aviso('Eso no es un archivo de Ozuna.', true); return; }
+  if(ctx.SOLO){ aviso('Esta aplicación es solo de consulta. Pídele al dueño una copia nueva.', true); return; }
   if(env.tipo === 'enlace') return recibirEnlace(env);
   if(env.tipo === 'cierre') return recibirCierre(env);
   aviso('Ese archivo es para la vendedora, no para ti.', true);
@@ -127,26 +141,37 @@ async function cierresDe(fecha){ const t = await db.todos('cierres'); return t.f
 function ultimosCierres(lista){ const m = {}; for(const c of lista){ const k = c.entregaId; if(!m[k] || c.version > m[k].version) m[k] = c; } return Object.values(m); }
 async function vHoy(){
   const fecha = fechaVista; const ent = await entregasDe(fecha); const cie = ultimosCierres(await cierresDe(fecha));
-  const ayer = new Date(+fecha.slice(0, 4), +fecha.slice(5, 7) - 1, +fecha.slice(8) - 1); const fAyer = ayer.getFullYear() + '-' + String(ayer.getMonth() + 1).padStart(2, '0') + '-' + String(ayer.getDate()).padStart(2, '0');
+  const fAyer = sumaDias(fecha, -1);
   const cieAyer = ultimosCierres(await cierresDe(fAyer));
   const netoDe = c => C.calcularCuadre(c.ventas, c.solicitudes, c.fondoCents).netoCup;
   const totalHoy = cie.reduce((s, c) => s + netoDe(c), 0), totalAyer = cieAyer.reduce((s, c) => s + netoDe(c), 0);
+  const gans = cie.map(c => ganancia(N, c)); const ganTotal = gans.reduce((s, g) => s + g.ganancia, 0); const sinCosto = [...new Set(gans.flatMap(g => g.sinCosto))];
+  const debe = (await fiadoPendiente(db)).reduce((s, x) => s + Math.max(0, x.debe), 0);
+  const nCierres = (await db.todos('cierres')).length;
+  const diasCopia = N.ultimaCopia ? Math.floor((Date.now() - new Date(N.ultimaCopia).getTime()) / 864e5) : null;
+  const pedirCopia = !ctx.SOLO && nCierres > 0 && (diasCopia == null || diasCopia >= 7);
   const tarjetas = N.puestos.map(p => {
     const e = ent.filter(x => x.puestoId === p.id), c = cie.filter(x => x.puestoId === p.id);
     const neto = c.reduce((s, x) => s + netoDe(x), 0);
-    const falt = c.map(x => { const q = C.calcularCuadre(x.ventas, x.solicitudes, x.fondoCents); const d = (x.contado.CUP != null ? x.contado.CUP - q.esperado.CUP : null); return d; }).filter(d => d != null);
+    const falt = c.map(x => { const q = C.calcularCuadre(x.ventas, x.solicitudes, x.fondoCents); return x.contado.CUP != null ? x.contado.CUP - q.esperado.CUP : null; }).filter(d => d != null);
     const com = c.length ? C.comisiones(N.personas, p.id, neto) : [];
     return h('div', {class:'card'}, h('div', {class:'fila'}, h('h3', {}, p.nombre), h('span', {class:'etq ' + (c.length ? '' : e.length ? 'warn' : 'bad')}, c.length ? 'Cierre recibido' : e.length ? 'Falta el cierre' : 'Sin entrega')),
-      c.length ? [filaDato('Ventas netas', C.dinero(neto) + ' CUP'), falt.length ? filaDato(falt[0] === 0 ? 'La caja cuadra' : falt[0] < 0 ? 'Falta dinero' : 'Sobra dinero', C.dinero(Math.abs(falt[0])), falt[0] === 0 ? 'bien' : 'mal') : null,
+      c.length ? [filaDato('Ventas netas', C.dinero(neto) + ' CUP'), falt.length ? filaDato(falt[0] === 0 ? 'La caja cuadra' : falt[0] < 0 ? 'Falta dinero' : 'Sobra dinero', C.dinero(Math.abs(falt[0])), falt[0] === 0 ? 'bien' : 'mal') : filaDato('Caja', 'Sin contar', 'mal'),
         com.map(x => filaDato('Comisión de ' + x.nombre + ' (' + x.pct + ' %)', C.dinero(x.cup))),
         h('button', {class:'enlace', onclick:() => { reporteId = c[0].id; pantalla = 'cierres'; pintar(); window.scrollTo(0, 0); }}, 'Ver el cierre')] : null);
   });
   const fecha0 = h('input', {type:'date', value:fecha, onchange:e => { fechaVista = e.target.value || C.hoy(); pintar(); }, 'aria-label':'Fecha'});
   const sinTasa = Object.keys(N.tasas).length && N.tasasFecha !== C.hoy();
-  montar(raiz, banner(), h('p', {class:'marca'}, N.nombre), h('h1', {}, 'Resumen del día'), campo('Fecha', fecha0),
-    sinTasa ? h('div', {class:'card aviso-c'}, h('b', {}, 'No has confirmado el cambio de hoy.'), h('p', {}, 'Los precios en dólares se calculan con el cambio que pongas en el catálogo.'), h('button', {class:'btn chico suave', onclick:() => { pantalla = 'catalogo'; pintar(); }}, 'Poner el cambio')) : null,
+  const sabado = !ctx.SOLO && new Date().getDay() === 6 && fecha === C.hoy();
+  montar(raiz, banner(), h('p', {class:'marca'}, N.nombre + (ctx.SOLO ? ' · solo consulta' : '')), h('h1', {}, 'Resumen del día'), campo('Fecha', fecha0),
+    sinTasa && !ctx.SOLO ? h('div', {class:'card aviso-c'}, h('b', {}, 'No has confirmado el cambio de hoy.'), h('p', {}, 'Los precios en dólares se calculan con el cambio que pongas en el catálogo.'), h('button', {class:'btn chico suave', onclick:() => { pantalla = 'catalogo'; pintar(); }}, 'Poner el cambio')) : null,
+    sabado ? h('div', {class:'card aviso-c'}, h('b', {}, 'Hoy es sábado: toca contar.'), h('button', {class:'btn chico suave', style:'margin-top:8px', onclick:() => { pantalla = 'mas'; masSub = 'conteo'; pintar(); }}, 'Hacer el conteo')) : null,
+    pedirCopia ? h('div', {class:'card aviso-c'}, h('b', {}, diasCopia == null ? 'Todavía no has hecho una copia de seguridad.' : 'Hace ' + diasCopia + ' días que no haces una copia.'), h('button', {class:'btn chico suave', style:'margin-top:8px', onclick:copiar}, 'Mandarme una copia')) : null,
     h('div', {class:'total'}, h('span', {}, 'Vendido (cierres recibidos)'), h('b', {class:'num'}, C.dinero(totalHoy))),
     cieAyer.length ? h('p', {class:'ayuda'}, 'Ayer: ' + C.dinero(totalAyer) + (totalAyer ? ' · ' + (totalHoy >= totalAyer ? '+' : '') + Math.round((totalHoy - totalAyer) / totalAyer * 100) + ' %' : '')) : null,
+    cie.length ? h('div', {class:'card'}, filaDato('Ganancia aproximada', C.dinero(ganTotal), ganTotal < 0 ? 'mal' : 'bien'), sinCosto.length ? h('p', {class:'ayuda'}, 'No cuenta el costo de: ' + sinCosto.join(', ') + '. Ponlo en el catálogo.') : null,
+      debe ? filaDato('Te deben (fiado)', C.dinero(debe)) : null,
+      h('button', {class:'btn chico', style:'margin-top:8px', onclick:() => exportarExcel(ctx, fecha, fecha)}, 'Mandar el reporte del día (Excel)')) : null,
     N.puestos.length ? tarjetas : h('div', {class:'card aviso-c'}, 'Todavía no hay puestos. Créalos en Más → Equipo, o carga el cuestionario en Más.'));
 }
 
@@ -192,7 +217,7 @@ async function generarEntrega(st, hoyEnts){
   if(st.modo === 'entrega'){
     const f = C.aCentavos(st.fondo != null ? st.fondo : String(N.fondoCents / 100)); if(isNaN(f) || f < 0){ aviso('Revisa el dinero suelto', true); return; }
     if(!Object.keys(cant).length && prods.some(p => p.controlStock)){ const si = await confirmar('No pusiste cantidades', 'La vendedora recibiría el catálogo pero ningún producto con cantidad.', 'Mandarla así', 'Volver'); if(!si) return; }
-    const payload = {entregaId:C.uid(), fecha:st.fecha, puesto:{id:pu.id, nombre:pu.nombre}, dispositivoId:d.id, fondoCents:f, tasas:Object.assign({}, N.tasas), catalogo:catalogoPayload(st.pid), agregos:N.agregos.map(a => ({id:a.id, nombre:a.nombre, precioCents:a.precioCents})), cantidades:cant, clave:N.clave};
+    const payload = {entregaId:C.uid(), fecha:st.fecha, puesto:{id:pu.id, nombre:pu.nombre}, dispositivoId:d.id, fondoCents:f, tasas:Object.assign({}, N.tasas), catalogo:catalogoPayload(st.pid), agregos:N.agregos.map(a => ({id:a.id, nombre:a.nombre, precioCents:a.precioCents})), cantidades:cant, clave:N.clave, listas:(N.listas || []).map(l => ({id:l.id, nombre:l.nombre, pct:l.pct})), mensajeros:N.personas.filter(x => x.rol === 'Mensajero').map(x => x.nombre)};
     env = await C.firmarSobre('entrega', perfil, d.id, payload, llaves.privateKey);
     await db.put('entregas', {id:payload.entregaId, fecha:st.fecha, puestoId:pu.id, dispositivoId:d.id, ts:Date.now(), fondoCents:f, cantidades:cant});
     nombre = 'entrega-' + pu.nombre.replace(/[^\wáéíóúñ]+/gi, '-').toLowerCase() + '-' + st.fecha + '.txt';
@@ -200,9 +225,10 @@ async function generarEntrega(st, hoyEnts){
     if(!hoyEnts.length){ aviso('Haz primero la entrega del día.', true); return; }
     if(!Object.keys(cant).length){ aviso('Pon al menos una cantidad para la reposición.', true); return; }
     const base = hoyEnts.sort((a, b) => b.ts - a.ts)[0];
-    const payload = {entregaId:base.id, dispositivoId:d.id, cantidades:cant, catalogo:catalogoPayload(st.pid), agregos:N.agregos.map(a => ({id:a.id, nombre:a.nombre, precioCents:a.precioCents})), tasas:Object.assign({}, N.tasas)};
+    const payload = {entregaId:base.id, dispositivoId:d.id, cantidades:cant, catalogo:catalogoPayload(st.pid), agregos:N.agregos.map(a => ({id:a.id, nombre:a.nombre, precioCents:a.precioCents})), tasas:Object.assign({}, N.tasas),
+      listas:(N.listas || []).map(l => ({id:l.id, nombre:l.nombre, pct:l.pct})), mensajeros:N.personas.filter(x => x.rol === 'Mensajero').map(x => x.nombre)};
     env = await C.firmarSobre('reposicion', perfil, d.id, payload, llaves.privateKey);
-    base.cantidades = Object.assign({}, base.cantidades); for(const [k, v] of Object.entries(cant)) base.cantidades[k] = (base.cantidades[k] || 0) + v; await db.put('entregas', base);
+    base.cantidades = Object.assign({}, base.cantidades); /* la reposición también lleva precios, listas y mensajeros al día */ for(const [k, v] of Object.entries(cant)) base.cantidades[k] = (base.cantidades[k] || 0) + v; await db.put('entregas', base);
     nombre = 'reposicion-' + pu.nombre.replace(/[^\wáéíóúñ]+/gi, '-').toLowerCase() + '-' + C.horaDe(Date.now()).replace(':', '') + '.txt';
   }
   const r = await C.enviarArchivo(nombre, C.sobreATexto(env));
@@ -228,7 +254,7 @@ async function vCierres(){
   if(reporteId) return vReporte();
   const todos = (await db.todos('cierres')).sort((a, b) => b.fecha.localeCompare(a.fecha) || b.recibidoEn - a.recibidoEn);
   const ult = ultimosCierres(todos).sort((a, b) => b.fecha.localeCompare(a.fecha) || b.recibidoEn - a.recibidoEn);
-  montar(raiz, banner(), h('h1', {}, 'Cierres'), cajaCarga('Cargar un cierre', 'Cuando la vendedora mande su cierre por WhatsApp, cárgalo aquí.'),
+  montar(raiz, banner(), h('h1', {}, 'Cierres'), ctx.SOLO ? null : cajaCarga('Cargar un cierre', 'Cuando la vendedora mande su cierre por WhatsApp, cárgalo aquí.'),
     h('h2', {}, 'Recibidos'), ult.length ? ult.map(c => { const q = C.calcularCuadre(c.ventas, c.solicitudes, c.fondoCents);
       return h('button', {class:'card', style:'display:block;width:100%;text-align:left', onclick:() => { reporteId = c.id; pintar(); window.scrollTo(0, 0); }},
         h('div', {class:'fila'}, h('b', {}, C.fechaBonita(c.fecha) + ' · ' + c.puestoNombre), h('b', {class:'num'}, C.dinero(q.netoCup))),
@@ -236,22 +262,29 @@ async function vCierres(){
 }
 async function vReporte(){
   const c = await db.get('cierres', reporteId); if(!c){ reporteId = null; return vCierres(); }
-  const q = C.calcularCuadre(c.ventas, c.solicitudes, c.fondoCents);
+  const q = C.calcularCuadre(c.ventas, c.solicitudes, c.fondoCents); const g = ganancia(N, c);
   const versiones = (await db.todos('cierres')).filter(x => x.entregaId === c.entregaId).length;
-  const monedas = Object.keys(q.esperado);
+  const monedas = Object.keys(q.esperado); const SOLO = ctx.SOLO;
+  const mermas = (await eventos(db, 'merma', c.fecha, c.fecha)).filter(m => m.donde === c.puestoId);
+  const mermaDe = nombre => mermas.filter(m => m.nombre.trim().toLowerCase() === nombre.trim().toLowerCase()).reduce((s, m) => s + m.qtyMilli, 0);
   const cuadre = monedas.map(m => { const cont = c.contado[m]; const d = cont != null ? cont - q.esperado[m] : null;
-    return h('div', {class:'lin'}, h('span', {}, 'Efectivo ' + m, h('div', {class:'d ayuda num'}, 'Debe haber ' + C.dinero(q.esperado[m]) + ' · contó ' + (cont != null ? C.dinero(cont) : 'nada'))),
-      h('b', {class:'num ' + (d === 0 ? 'bien' : d == null ? '' : 'mal')}, d == null ? 'Sin contar' : d === 0 ? 'Cuadra' : (d < 0 ? 'Faltan ' : 'Sobran ') + C.dinero(Math.abs(d), m))); });
-  const stock = Object.entries(c.restante || {}).map(([id, r]) => { const p = N.productos.find(x => x.id === id); const quedan = r.entregado - r.vendido;
-    return h('tr', {}, h('td', {}, p ? p.nombre : id.slice(0, 6)), h('td', {class:'num'}, C.cantidad(r.entregado)), h('td', {class:'num'}, C.cantidad(r.vendido)), h('td', {class:'num ' + (quedan < 0 ? 'mal' : '')}, C.cantidad(quedan))); });
+    const contar = () => hoja('Contar el efectivo en ' + m, cerrar => { const inp = h('input', {inputmode:'decimal', placeholder:'0'}); return h('div', {}, h('p', {class:'ayuda'}, 'Debe haber ' + C.dinero(q.esperado[m], m) + '.'), campo('Lo que cuentas', inp),
+      h('button', {class:'btn', onclick:async () => { const v = C.aCentavos(inp.value); if(isNaN(v) || v < 0){ aviso('Revisa la cantidad', true); return; } c.contado[m] = v; c.contadoPor = 'dueno'; await db.put('cierres', c); cerrar(); pintar(); }}, 'Guardar')); });
+    return h('div', {class:'lin'}, h('span', {}, 'Efectivo ' + m, h('div', {class:'d ayuda num'}, 'Debe haber ' + C.dinero(q.esperado[m]) + ' · contó ' + (cont != null ? C.dinero(cont) + (c.contadoPor === 'dueno' ? ' (lo contaste tú)' : '') : 'nada'))),
+      d == null ? (SOLO ? h('b', {}, 'Sin contar') : h('button', {class:'btn chico', onclick:contar}, 'Contar yo')) : h('b', {class:'num ' + (d === 0 ? 'bien' : 'mal')}, d === 0 ? 'Cuadra' : (d < 0 ? 'Faltan ' : 'Sobran ') + C.dinero(Math.abs(d), m))); });
+  const stock = Object.entries(c.restante || {}).map(([id, r]) => { const p = N.productos.find(x => x.id === id); const mm = p ? mermaDe(p.nombre) : 0; const quedan = r.entregado - r.vendido - mm;
+    return h('tr', {}, h('td', {}, p ? p.nombre : id.slice(0, 6)), h('td', {class:'num'}, C.cantidad(r.entregado)), h('td', {class:'num'}, C.cantidad(r.vendido)), h('td', {class:'num'}, mm ? C.cantidad(mm) : ''), h('td', {class:'num ' + (quedan < 0 ? 'mal' : '')}, C.cantidad(quedan))); });
   const com = C.comisiones(N.personas, c.puestoId, q.netoCup);
   const trans = q.transferencias.map(t => h('label', {class:'lin', style:'cursor:pointer'}, h('span', {}, ticket(t.num) + ' · ' + C.horaDe(t.hora) + ' · ' + (t.metodo === 'qr' ? 'QR' : 'Transferencia'), h('div', {class:'d num'}, C.dinero(t.cup) + (c.capturas[t.ventaId] ? ' · mandó captura' : ' · sin captura'))),
-    h('span', {}, 'Llegó ', h('input', {type:'checkbox', style:'width:26px;min-height:26px;vertical-align:middle', checked:!!c.transfOk[t.ventaId], onchange:async e => { c.transfOk[t.ventaId] = e.target.checked; await db.put('cierres', c); }}))));
+    h('span', {}, 'Llegó ', h('input', {type:'checkbox', disabled:SOLO, style:'width:26px;min-height:26px;vertical-align:middle', checked:!!c.transfOk[t.ventaId], onchange:async e => { c.transfOk[t.ventaId] = e.target.checked; await db.put('cierres', c); }}))));
   const sol = (c.solicitudes || []).map(s => { const dec = c.decisiones[s.id];
     return h('div', {class:'card'}, h('div', {class:'fila top'}, h('div', {}, h('b', {}, (s.tipo === 'devolucion' ? 'Devolución' : 'Anulación') + ' del ' + ticket(s.num)), h('div', {class:'ayuda'}, s.motivo + ' · devolvió ' + C.dinero(s.efectivoDevueltoCents))),
-        dec ? h('span', {class:'etq ' + (dec === 'aprobada' ? '' : 'bad')}, dec) : null),
-      h('div', {class:'opts'}, ['aprobada', 'rechazada'].map(x => h('button', {class:'op', 'aria-pressed':dec === x, onclick:async () => { c.decisiones[s.id] = x; await db.put('cierres', c); pintar(); }}, x === 'aprobada' ? 'Aprobar' : 'Rechazar')))); });
+        dec ? h('span', {class:'etq ' + (dec === 'aprobada' ? '' : 'bad')}, dec) : h('span', {class:'etq warn'}, 'pendiente')),
+      SOLO ? null : h('div', {class:'opts'}, ['aprobada', 'rechazada'].map(x => h('button', {class:'op', 'aria-pressed':dec === x, onclick:async () => { c.decisiones[s.id] = x; await db.put('cierres', c); pintar(); }}, x === 'aprobada' ? 'Aprobar' : 'Rechazar')))); });
   const fiado = q.fiado.map(f => filaDato(ticket(f.num) + ' · ' + (f.cliente || 'sin nombre'), C.dinero(f.cup)));
+  const domi = c.ventas.filter(v => v.domicilio).map(v => h('div', {class:'lin'}, h('span', {}, ticket(v.num) + ' · ' + v.domicilio.direccion, h('div', {class:'d'}, v.domicilio.mensajero ? 'Mensajero: ' + v.domicilio.mensajero : 'Sin mensajero')), h('b', {class:'num'}, C.dinero(v.totalCents))));
+  const especiales = c.ventas.flatMap(v => v.lineas.filter(l => l.lista).map(l => filaDato(ticket(v.num) + ' · ' + l.nombre + ' (' + l.lista + ')', C.dinero(l.precioCents) + ' en vez de ' + C.dinero(l.precioBaseCents))));
+  const tras = (c.traspasos || []).map(t => filaDato((t.sentido === 'salida' ? 'Salió hacia ' : 'Entró desde ') + t.contra, t.items.map(i => { const p = N.productos.find(x => x.id === i.productoId); return (p ? p.nombre : '?') + ' ' + C.cantidad(i.qtyMilli); }).join(', ')));
   const ventas = c.ventas.map(v => h('div', {class:'lin'}, h('span', {}, ticket(v.num) + ' · ' + C.horaDe(v.ts), h('div', {class:'d'}, v.lineas.map(l => l.nombre + ' ×' + C.cantidad(l.qtyMilli)).join(', '))), h('b', {class:'num'}, C.dinero(v.totalCents))));
   montar(raiz, banner(), h('button', {class:'enlace', onclick:() => { reporteId = null; pintar(); }}, '‹ Volver a los cierres'),
     h('p', {class:'marca'}, c.puestoNombre + ' · ' + c.vendedora), h('h1', {}, C.fechaBonita(c.fecha)),
@@ -261,11 +294,16 @@ async function vReporte(){
     h('div', {class:'card', style:'margin-top:10px'}, filaDato('Vendido', C.dinero(q.ventasCup)), q.devueltoCup ? filaDato('Devuelto', '-' + C.dinero(q.devueltoCup)) : null,
       filaDato('Efectivo', C.dinero(q.porMetodo.efectivo || 0)), filaDato('Transferencia y QR', C.dinero((q.porMetodo.transferencia || 0) + (q.porMetodo.qr || 0))), q.porMetodo.fiado ? filaDato('Fiado', C.dinero(q.porMetodo.fiado)) : null),
     h('h2', {}, 'Cuadre de la caja'), h('div', {class:'card'}, cuadre),
+    h('h2', {}, 'Ganancia aproximada'), h('div', {class:'card'}, filaDato('Ventas netas', C.dinero(g.neto)), filaDato('Costo de lo vendido', '-' + C.dinero(g.costo)), filaDato('Comisiones', '-' + C.dinero(g.comisiones)), filaDato('Ganancia', C.dinero(g.ganancia), g.ganancia < 0 ? 'mal' : 'bien'),
+      g.sinCosto.length ? h('p', {class:'ayuda'}, 'No cuenta el costo de: ' + g.sinCosto.join(', ') + '.') : null),
     com.length ? [h('h2', {}, 'Comisiones'), h('div', {class:'card'}, com.map(x => filaDato(x.nombre + ' (' + x.pct + ' %)', C.dinero(x.cup))))] : null,
-    trans.length ? [h('h2', {}, 'Transferencias y QR'), h('p', {class:'ayuda'}, 'Marca las que ya viste llegar a tu cuenta.'), h('div', {class:'card'}, trans)] : null,
+    trans.length ? [h('h2', {}, 'Transferencias y QR'), SOLO ? null : h('p', {class:'ayuda'}, 'Marca las que ya viste llegar a tu cuenta.'), h('div', {class:'card'}, trans)] : null,
     sol.length ? [h('h2', {}, 'Pedidos de la vendedora'), sol] : null,
+    especiales.length ? [h('h2', {}, 'Precios especiales'), h('div', {class:'card'}, especiales)] : null,
+    domi.length ? [h('h2', {}, 'Domicilios'), h('div', {class:'card'}, domi)] : null,
+    tras.length ? [h('h2', {}, 'Traspasos'), h('div', {class:'card'}, tras)] : null,
     fiado.length ? [h('h2', {}, 'Fiado'), h('div', {class:'card'}, fiado)] : null,
-    stock.length ? [h('h2', {}, 'Lo que queda'), h('div', {class:'card tabla'}, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Producto'), h('th', {}, 'Entregado'), h('th', {}, 'Vendido'), h('th', {}, 'Queda'))), h('tbody', {}, stock)))] : null,
+    stock.length ? [h('h2', {}, 'Lo que queda'), h('div', {class:'card tabla'}, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Producto'), h('th', {}, 'Entregado'), h('th', {}, 'Vendido'), h('th', {}, 'Merma'), h('th', {}, 'Queda'))), h('tbody', {}, stock)))] : null,
     h('h2', {}, 'Cada venta (' + c.ventas.length + ')'), h('div', {class:'card'}, ventas));
 }
 
@@ -278,13 +316,26 @@ function vCatalogo(){
     h('div', {class:'card'}, h('h3', {}, 'Cambio del día'), h('p', {class:'ayuda'}, 'Pesos por cada moneda. Se usa para precios en dólares y para cobrar en otras monedas. Confírmalo cada mañana.'), tasasEditor()),
     h('div', {class:'opts'}, N.puestos.map(p => h('button', {class:'op', 'aria-pressed':p.id === tabPuesto, onclick:() => { tabPuesto = p.id; pintar(); }}, p.nombre))),
     h('h2', {}, 'Productos de ' + nomPuesto(tabPuesto)),
-    prods.length ? prods.map(p => h('button', {class:'card', style:'display:block;width:100%;text-align:left;' + (p.activo === false ? 'opacity:.5' : ''), onclick:() => editarProducto(p)},
-      h('div', {class:'fila'}, h('b', {}, p.nombre), h('b', {class:'num'}, C.dinero(p.precioCents, p.moneda === 'USD' ? 'USD' : '') + (p.moneda === 'USD' && N.tasas.USD ? ' ≈ ' + C.dinero(C.precioEnCup(p, N.tasas, N.redondeo)) : ''))),
-      h('div', {class:'ayuda'}, 'por ' + C.MEDIDAS[p.medida].s + (p.controlStock ? ' · con cantidad' : ' · sin límite') + (p.admiteAgregos ? ' · con agregos' : '') + (p.activo === false ? ' · oculto' : '')))) : h('div', {class:'card'}, 'Este puesto no tiene productos. Añade el primero.'),
+    prods.length ? prods.map(p => { const cc = costoCup(N, p), pc = C.precioEnCup(p, N.tasas, N.redondeo);
+      return h('button', {class:'card', style:'display:block;width:100%;text-align:left;' + (p.activo === false ? 'opacity:.5' : ''), onclick:() => editarProducto(p)},
+        h('div', {class:'fila'}, h('b', {}, p.nombre), h('b', {class:'num'}, C.dinero(p.precioCents, p.moneda === 'USD' ? 'USD' : '') + (p.moneda === 'USD' && N.tasas.USD ? ' ≈ ' + C.dinero(pc) : ''))),
+        h('div', {class:'ayuda'}, 'por ' + C.MEDIDAS[p.medida].s + (p.controlStock ? ' · con cantidad' : ' · sin límite') + (p.admiteAgregos ? ' · con agregos' : '') + (p.activo === false ? ' · oculto' : '') + (cc != null && pc ? ' · gana ' + C.dinero(pc - cc) : ' · sin costo'))); }) : h('div', {class:'card'}, 'Este puesto no tiene productos. Añade el primero.'),
     h('button', {class:'btn', onclick:() => editarProducto({id:C.uid(), puestoId:tabPuesto, nombre:'', medida:'unidad', precioCents:0, moneda:'CUP', costoCents:null, costoMoneda:'CUP', admiteAgregos:false, controlStock:true, activo:true}, true)}, '+ Añadir producto'),
     h('h2', {}, 'Agregos de la pizza'), N.agregos.map(a => h('div', {class:'card'}, h('div', {class:'fila'}, h('b', {}, a.nombre), h('b', {class:'num'}, C.dinero(a.precioCents)),
       h('button', {class:'enlace', onclick:() => editarAgrego(a)}, 'Editar')))),
-    h('button', {class:'btn suave', onclick:() => editarAgrego({id:C.uid(), nombre:'', precioCents:0}, true)}, '+ Añadir agrego'));
+    h('button', {class:'btn suave', onclick:() => editarAgrego({id:C.uid(), nombre:'', precioCents:0}, true)}, '+ Añadir agrego'),
+    h('h2', {}, 'Precios especiales'), h('p', {class:'ayuda'}, 'Rebajas que la vendedora puede aplicar, pero solo con tu clave: conocidos, familia, el que compra mucho, otros negocios.'),
+    (N.listas || []).map(l => h('div', {class:'card'}, h('div', {class:'fila'}, h('b', {}, l.nombre), h('b', {class:'num'}, '−' + l.pct + ' %'), h('button', {class:'enlace', onclick:() => editarLista(l)}, 'Editar')))),
+    h('button', {class:'btn suave', onclick:() => editarLista({id:C.uid(), nombre:'', pct:10}, true)}, '+ Añadir precio especial'));
+}
+function editarLista(l, nuevo){
+  const e = Object.assign({}, l); N.listas = N.listas || [];
+  hoja(nuevo ? 'Nuevo precio especial' : l.nombre, cerrar => h('div', {}, campo('¿Para quién?', h('input', {value:e.nombre, placeholder:'Conocidos y familia', oninput:x => e.nombre = x.target.value})),
+    campo('Rebaja (% menos que el precio normal)', h('input', {inputmode:'decimal', value:String(e.pct), oninput:x => e.__p = x.target.value})),
+    h('button', {class:'btn', onclick:async () => { const n = e.__p != null ? C.num(e.__p) : e.pct; if(!e.nombre.trim() || isNaN(n) || n <= 0 || n > 90){ aviso('Revisa el nombre y la rebaja (entre 1 y 90)', true); return; }
+      if(n > 50 && !(await confirmar('Rebaja muy grande', 'Es más de la mitad del precio.', 'Es correcto', 'Corregir'))) return;
+      e.nombre = e.nombre.trim(); e.pct = n; delete e.__p; const i = N.listas.findIndex(x => x.id === e.id); if(i >= 0) N.listas[i] = e; else N.listas.push(e); await guardarN(); cerrar(); pintar(); }}, 'Guardar'),
+    nuevo ? null : h('button', {class:'btn suave', onclick:async () => { N.listas = N.listas.filter(x => x.id !== l.id); await guardarN(); cerrar(); pintar(); }}, 'Quitar')));
 }
 function tasasEditor(){
   const caja = h('div'); const monedas = Object.keys(N.tasas);
@@ -320,6 +371,7 @@ function editarProducto(p, nuevo){
         const i = N.productos.findIndex(x => x.id === e.id); if(i >= 0) N.productos[i] = e; else N.productos.push(e);
         await guardarN(); cerrar(); aviso('Guardado'); pintar();
       }}, 'Guardar'),
+      nuevo ? null : h('button', {class:'btn suave', onclick:() => { cerrar(); abrirFicha(ctx, p, pintar); }}, 'Ficha de costo (ingredientes y precio sugerido)'),
       nuevo ? null : h('button', {class:'btn suave', onclick:async () => { if(await confirmar('¿Quitar «' + p.nombre + '»?', 'Deja de salir en las entregas. Los cierres viejos no cambian.', 'Quitar', 'No')){ N.productos = N.productos.filter(x => x.id !== p.id); await guardarN(); cerrar(); pintar(); } }}, 'Quitar este producto'));
   });
 }
@@ -332,25 +384,53 @@ function editarAgrego(a, nuevo){
     nuevo ? null : h('button', {class:'btn suave', onclick:async () => { N.agregos = N.agregos.filter(x => x.id !== a.id); await guardarN(); cerrar(); pintar(); }}, 'Quitar')));
 }
 
-/* ---------- más: equipo, copia, ajustes ---------- */
+/* ---------- más ---------- */
 function vMas(){
+  if(masSub){
+    const subs = {compras:vCompras, gastos:vGastos, casa:vCasa, conteo:vConteo, merma:vMerma, traspasos:vTraspasos, fiado:vFiado, historial:vHistorial, reportes:vReportes, equipo:vEquipo, ajustes:vAjustes};
+    return subs[masSub](ctx);
+  }
+  const t = (id, ico, nombre, desc) => h('button', {class:'card', style:'display:block;width:100%;text-align:left', onclick:() => ctx.ir(id)}, h('div', {class:'fila'}, h('div', {}, h('b', {}, ico + ' ' + nombre), h('div', {class:'ayuda'}, desc)), h('span', {'aria-hidden':'true'}, '›')));
+  const todas = [t('historial', '📈', 'Historial', 'Días, semanas y meses; lo que más se vende'), t('reportes', '📤', 'Reportes', 'Excel y resumen para Yelenis'), t('fiado', '📒', 'Fiado', 'Quién debe y cuánto'),
+    t('compras', '🛒', 'Compras', 'Lo que compras cada día'), t('gastos', '💡', 'Gastos', 'Fijos del mes y los del día'), t('casa', '🏠', 'Almacén de casa', 'Lo que hay guardado en casa'),
+    t('merma', '🗑️', 'Merma', 'Lo que se echa a perder'), t('traspasos', '🔁', 'Traspasos', 'Mercancía de un puesto a otro'), t('conteo', '🔢', 'Conteo del sábado', 'Contar y comparar'),
+    t('equipo', '👥', 'Equipo', 'Teléfonos, puestos y personas'), t('ajustes', '⚙️', 'Ajustes y copia', 'Apariencia, copia de seguridad, clave')];
+  const solo = [todas[0], todas[1], todas[2], t('ajustes', '⚙️', 'Ajustes', 'Apariencia y copia de consulta')];
+  montar(raiz, banner(), h('h1', {}, 'Más'), ctx.SOLO ? solo : todas);
+}
+function vEquipo(){
   const disp = N.dispositivos.map(d => h('div', {class:'card'}, h('div', {class:'fila'}, h('div', {}, h('b', {}, d.nombre), h('div', {class:'ayuda'}, nomPuesto(d.puestoId) + ' · huella ' + d.huella)),
     h('button', {class:'enlace', onclick:async () => { if(await confirmar('¿Quitar el teléfono de ' + d.nombre + '?', 'Dejarás de aceptar sus cierres.', 'Quitar', 'No')){ N.dispositivos = N.dispositivos.filter(x => x.id !== d.id); await guardarN(); pintar(); } }}, 'Quitar'))));
-  montar(raiz, banner(), h('h1', {}, 'Más'),
+  montar(raiz, banner(), h('button', {class:'enlace', onclick:ctx.volver}, '‹ Más'), h('h1', {}, 'Equipo'),
     h('div', {class:'card'}, h('h3', {}, 'Teléfonos de las vendedoras'), disp.length ? disp : h('p', {class:'ayuda'}, 'Ninguno todavía. La vendedora te manda su código de enlace desde su teléfono, en «Más».'), cajaCarga('Cargar un código de enlace')),
     h('div', {class:'card'}, h('h3', {}, 'Puestos'), N.puestos.map(p => h('div', {class:'lin'}, h('span', {}, h('b', {}, p.nombre), h('div', {class:'d'}, (p.tipos || []).join(' + '))), h('button', {class:'enlace', onclick:() => editarPuesto(p)}, 'Editar'))),
       h('button', {class:'btn suave', onclick:() => editarPuesto({id:C.uid(), nombre:'', tipos:[], lugar:''}, true)}, '+ Añadir puesto')),
     h('div', {class:'card'}, h('h3', {}, 'Personas'), N.personas.map(p => h('div', {class:'lin'}, h('span', {}, h('b', {}, p.nombre), h('div', {class:'d'}, p.rol + ' · ' + nomPuesto(p.puestoId) + (p.pct ? ' · ' + p.pct + ' %' : ''))), h('button', {class:'enlace', onclick:() => editarPersona(p)}, 'Editar'))),
-      h('button', {class:'btn suave', onclick:() => editarPersona({id:C.uid(), nombre:'', rol:ROLES[0], puestoId:(N.puestos[0] || {}).id || '', pct:'', base:BASES[0]}, true)}, '+ Añadir persona')),
-    h('div', {class:'card'}, h('h3', {}, 'Cargar datos del cuestionario'), h('p', {class:'ayuda'}, 'Reemplaza puestos, personas, productos, agregos y gastos con lo que dice el cuestionario.'),
-      h('button', {class:'btn suave', onclick:() => hoja('Datos del cuestionario', cerrar => { const ta = h('textarea', {class:'bloque-codigo'}); return h('div', {}, ta, h('button', {class:'btn', onclick:async () => {
-        if(!(await confirmar('¿Reemplazar tus datos?', 'Se cambian los puestos, personas y productos actuales.', 'Reemplazar', 'Cancelar'))) return;
-        const r = desdeCuestionario(ta.value); if(r){ aviso(r, true); return; } await guardarN(); cerrar(); aviso('Datos cargados'); pintar(); }}, 'Cargar')); })}, 'Pegar el cuestionario')),
-    h('div', {class:'card'}, h('h3', {}, 'Copia de seguridad'), h('p', {class:'ayuda'}, 'Incluye tu llave y todos tus datos. Guárdala solo para ti (mándatela a ti mismo): quien la tenga puede firmar como tú.'),
-      h('button', {class:'btn suave', onclick:copiar}, 'Guardar o mandar una copia'), h('button', {class:'btn suave', onclick:restaurar}, 'Recuperar una copia')),
-    h('div', {class:'card'}, h('h3', {}, 'Mi llave'), h('p', {class:'ayuda'}, 'Huella de esta aplicación: ', h('b', {id:'mi-huella'}, '…')), h('button', {class:'btn suave', onclick:() => { desbloqueado = false; bloqueo(); }}, 'Bloquear ahora')),
+      h('button', {class:'btn suave', onclick:() => editarPersona({id:C.uid(), nombre:'', rol:ROLES[0], puestoId:(N.puestos[0] || {}).id || '', pct:'', base:BASES[0]}, true)}, '+ Añadir persona')));
+}
+function vAjustes(){
+  const SOLO = ctx.SOLO;
+  montar(raiz, banner(), h('button', {class:'enlace', onclick:ctx.volver}, '‹ Más'), h('h1', {}, 'Ajustes'), selectorTema(),
+    SOLO ? h('div', {class:'card'}, h('h3', {}, 'Copia de consulta'), h('p', {class:'ayuda'}, 'Esta aplicación solo muestra las cuentas. Para ver lo más nuevo, carga una copia reciente que te mande el dueño.'), h('button', {class:'btn', onclick:abrirConsulta}, 'Cargar una copia nueva')) : [
+      h('div', {class:'card'}, h('h3', {}, 'Cargar datos del cuestionario'), h('p', {class:'ayuda'}, 'Reemplaza puestos, personas, productos, agregos y gastos con lo que dice el cuestionario.'),
+        h('button', {class:'btn suave', onclick:() => hoja('Datos del cuestionario', cerrar => { const ta = h('textarea', {class:'bloque-codigo'}); return h('div', {}, ta, h('button', {class:'btn', onclick:async () => {
+          if(!(await confirmar('¿Reemplazar tus datos?', 'Se cambian los puestos, personas y productos actuales.', 'Reemplazar', 'Cancelar'))) return;
+          const r = desdeCuestionario(ta.value); if(r){ aviso(r, true); return; } await guardarN(); cerrar(); aviso('Datos cargados'); pintar(); }}, 'Cargar')); })}, 'Pegar el cuestionario')),
+      h('div', {class:'card'}, h('h3', {}, 'Copia de seguridad'), h('p', {class:'ayuda'}, 'Incluye tu llave y todos tus datos. Guárdala solo para ti (mándatela a ti mismo): quien la tenga puede firmar como tú. La misma copia sirve para que tu familia vea las cuentas en su teléfono.'),
+        N.ultimaCopia ? h('p', {class:'ayuda'}, 'Última copia: ' + N.ultimaCopia.slice(0, 10)) : null,
+        h('button', {class:'btn suave', onclick:copiar}, 'Guardar o mandar una copia'), h('button', {class:'btn suave', onclick:restaurar}, 'Recuperar una copia')),
+      h('div', {class:'card'}, h('h3', {}, 'Clave del dueño'), h('button', {class:'btn suave', onclick:cambiarClave}, 'Cambiar la clave'))],
+    h('div', {class:'card'}, h('h3', {}, 'Mi llave'), h('p', {class:'ayuda'}, 'Huella de esta aplicación: ', h('b', {id:'mi-huella'}, '…')), h('button', {class:'btn suave', onclick:() => { desbloqueado = false; masSub = null; bloqueo(); }}, 'Bloquear ahora')),
     h('p', {class:'ayuda'}, 'Ozuna Dueño · versión ' + VERSION_APP));
   C.huella(perfil.pub).then(f => { const e = document.getElementById('mi-huella'); if(e) e.textContent = f; });
+}
+function cambiarClave(){
+  hoja('Cambiar la clave', cerrar => { const a = h('input', {type:'password', inputmode:'numeric', placeholder:'Clave actual'}), b = h('input', {type:'password', inputmode:'numeric', placeholder:'4 a 6 números'}), c2 = h('input', {type:'password', inputmode:'numeric', placeholder:'Repite la nueva'});
+    return h('div', {}, campo('Clave actual', a), campo('Clave nueva', b), campo('Repite la nueva', c2), h('p', {class:'ayuda'}, 'Los teléfonos de las vendedoras usan la clave nueva desde la próxima entrega que les mandes.'),
+      h('button', {class:'btn', onclick:async () => {
+        if(await C.hashClave(a.value, N.clave.sal) !== N.clave.hash){ aviso('La clave actual no es correcta.', true); return; }
+        if(!/^\d{4,6}$/.test(b.value)){ aviso('La clave nueva debe tener de 4 a 6 números.', true); return; } if(b.value !== c2.value){ aviso('Las dos claves no coinciden.', true); return; }
+        const sal = C.nuevaSal(); N.clave = {sal, hash:await C.hashClave(b.value, sal)}; await guardarN(); cerrar(); aviso('Clave cambiada'); }}, 'Cambiar')); });
 }
 function editarPuesto(p, nuevo){
   const e = Object.assign({}, p, {tipos:(p.tipos || []).slice()}); const TIPOS = ['Pizzería', 'Cafetería', 'Cárnico', 'Otro'];
@@ -373,19 +453,37 @@ function editarPersona(p, nuevo){
     nuevo ? null : h('button', {class:'btn suave', onclick:async () => { N.personas = N.personas.filter(x => x.id !== p.id); await guardarN(); cerrar(); pintar(); }}, 'Quitar')));
 }
 async function copiar(){
+  if(ctx.SOLO){ aviso('Esta aplicación es solo de consulta.', true); return; }
   const jwk = await C.exportarPrivada(llaves.privateKey);
-  const t = JSON.stringify({ozunaCopia:1, v:1, tipo:'dueno', perfil, llave:jwk, negocio:N, entregas:await db.todos('entregas'), cierres:await db.todos('cierres')});
-  const r = await C.enviarArchivo('copia-dueno-' + C.hoy() + '.txt', t); if(r === 'descargado') aviso('Se guardó en Descargas.');
+  const t = JSON.stringify({ozunaCopia:1, v:2, tipo:'dueno', perfil, llave:jwk, negocio:N, entregas:await db.todos('entregas'), cierres:await db.todos('cierres'), eventos:await db.todos('eventos')});
+  const r = await C.enviarArchivo('copia-dueno-' + C.hoy() + '.txt', t);
+  if(r !== 'cancelado'){ N.ultimaCopia = new Date().toISOString(); await guardarN(); if(r === 'descargado') aviso('Se guardó en Descargas.'); else aviso('Copia lista'); pintar(); }
+}
+async function leerCopia(){
+  const t = await C.elegirArchivo(); if(!t) return null;
+  let d; try { d = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch(e){}
+  if(!d || d.ozunaCopia !== 1 || d.tipo !== 'dueno'){ aviso('Ese archivo no es una copia del dueño.', true); return null; }
+  return d;
+}
+async function cargarDatosCopia(d){
+  await db.vaciar('entregas'); await db.vaciar('cierres'); await db.vaciar('eventos');
+  for(const x of d.entregas || []) await db.put('entregas', x); for(const x of d.cierres || []) await db.put('cierres', x); for(const x of d.eventos || []) await db.put('eventos', x);
 }
 async function restaurar(){
-  const t = await C.elegirArchivo(); if(!t) return;
-  let d; try { d = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch(e){}
-  if(!d || d.ozunaCopia !== 1 || d.tipo !== 'dueno'){ aviso('Ese archivo no es una copia del dueño.', true); return; }
+  const d = await leerCopia(); if(!d) return;
   if(!(await confirmar('Esto reemplaza todo lo que hay ahora', 'Se cargan tu llave, tus datos y los cierres de la copia.', 'Recuperar', 'Cancelar'))) return;
   llaves = {privateKey:await C.importarPrivada(d.llave), pub:d.perfil.pub}; perfil = d.perfil; N = d.negocio;
-  await db.kvSet('llaves', llaves); await db.kvSet('perfil', perfil); await guardarN(); await db.vaciar('entregas'); await db.vaciar('cierres');
-  for(const x of d.entregas || []) await db.put('entregas', x); for(const x of d.cierres || []) await db.put('cierres', x);
+  await db.kvSet('llaves', llaves); await db.kvSet('perfil', perfil); await guardarN(); await cargarDatosCopia(d);
   aviso('Copia recuperada'); pintar();
+}
+/* Modo consulta: sin llave, solo para ver cierres, historial y reportes. Sirve para la familia. */
+async function abrirConsulta(){
+  const d = await leerCopia(); if(!d) return;
+  if(perfil && !perfil.consulta && llaves && llaves.privateKey){ aviso('Este teléfono es del dueño: usa «Recuperar una copia».', true); return; }
+  if(!(await confirmar('Abrir solo para ver', 'Verás las cuentas de la copia, sin poder cambiar nada ni mandar entregas.', 'Abrir', 'Cancelar'))) return;
+  perfil = {id:d.perfil.id, nombre:'Consulta', pub:d.perfil.pub, consulta:true}; llaves = {pub:d.perfil.pub}; N = d.negocio;
+  await db.kvSet('perfil', perfil); await db.kvSet('llaves', llaves); await guardarN(); await cargarDatosCopia(d);
+  desbloqueado = true; pantalla = 'hoy'; masSub = null; pintar(); aviso('Copia cargada. Esta aplicación solo muestra las cuentas.');
 }
 
 iniciar();

@@ -1,4 +1,5 @@
 /* Piezas de interfaz comunes: elementos, avisos, hojas emergentes y confirmaciones dentro de la página. */
+import { temaGuardado, guardarTema } from './tema.js';
 export function h(tag, attrs, ...hijos){
   const e = document.createElement(tag);
   for(const [k, v] of Object.entries(attrs || {})){
@@ -47,6 +48,14 @@ export function campo(etiqueta, input, ayuda){
 export function barraNav(items, actual, ir){
   return h('nav', {class:'nav', 'aria-label':'Secciones'}, h('div', {class:'nav-in'},
     items.map(([id, ico, nombre]) => h('button', {class:'nav-b', 'aria-current':id === actual ? 'page' : null, onclick:() => ir(id)}, h('span', {class:'ico', 'aria-hidden':'true'}, ico), nombre))));
+}
+/* Selector de tema: Automático (sigue al teléfono), Claro u Oscuro. */
+export function selectorTema(){
+  const caja = h('div', {class:'opts'});
+  const pinta = () => caja.replaceChildren(...[['auto', 'Automático'], ['claro', 'Claro'], ['oscuro', 'Oscuro']].map(([v, t]) =>
+    h('button', {class:'op', 'aria-pressed':temaGuardado() === v, onclick:() => { guardarTema(v); pinta(); }}, t)));
+  pinta();
+  return h('div', {class:'card'}, h('h3', {}, 'Apariencia'), h('p', {class:'ayuda'}, 'Automático usa el modo claro u oscuro del teléfono.'), caja);
 }
 /* Aviso de versión nueva: el service worker nuevo queda esperando hasta que la persona lo acepte. */
 export function registrarSW(ruta, alHaber){

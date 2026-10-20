@@ -1,8 +1,8 @@
 /* Service worker de la vendedora: guarda la app para usarla sin internet y recibe archivos desde «Compartir». */
-const VERSION = '0.1.1';
+const VERSION = '0.2.0';
 const CACHE = 'ozuna-vendedor-' + VERSION;
 const BANDEJA = 'ozuna-bandeja-vendedor';
-const ARCHIVOS = ['./', './index.html', './app.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/estilos.css', '../icono-192.png', '../icono-512.png'];
+const ARCHIVOS = ['./', './index.html', './app.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/tema.js', '../shared/estilos.css', '../icono-192.png', '../icono-512.png'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS))); });
 self.addEventListener('activate', e => e.waitUntil((async () => {
