@@ -16,7 +16,7 @@ export async function tablasReporte(ctx, desde, hasta){
   const V = [['Fecha', 'Hora', 'Puesto', 'Ticket', 'Vendedora', 'Producto', 'Cantidad', 'Unidad', 'Precio', 'Importe', 'Agregos', 'Precio especial', 'Domicilio']];
   const P = [['Fecha', 'Puesto', 'Ticket', 'Método', 'Moneda', 'Monto', 'Tasa', 'Equivale en CUP', 'Cliente (fiado)']];
   const D = [['Fecha', 'Puesto', 'Ticket', 'Tipo', 'Motivo', 'Efectivo devuelto', 'Decisión del dueño']];
-  const T = [['Fecha', 'Puesto', 'Ticket', 'Método', 'Monto CUP', 'La vendedora mandó captura', 'Llegó a la cuenta']];
+  const T = [['Fecha', 'Puesto', 'Ticket', 'Método', 'Monto CUP', 'Código del SMS', 'La vendedora mandó captura', 'Llegó a la cuenta']];
   const K = [['Fecha', 'Puesto', 'Persona', 'Porciento', 'Comisión']];
   for(const c of cierres){
     const q = C.calcularCuadre(c.ventas, c.solicitudes, c.fondoCents), g = ganancia(N, c); const cont = c.contado.CUP;
@@ -28,7 +28,7 @@ export async function tablasReporte(ctx, desde, hasta){
       for(const p of v.pagos) P.push([c.fecha, c.puestoNombre, tk, p.metodo === 'efectivo' ? 'Efectivo' : p.metodo === 'qr' ? 'QR' : p.metodo === 'fiado' ? 'Fiado' : 'Transferencia', p.moneda, peso(p.monto), peso(p.tasa), peso(p.cup), p.cliente || '']);
     }
     for(const s of c.solicitudes || []) D.push([c.fecha, c.puestoNombre, 'T-' + String(s.num).padStart(3, '0'), s.tipo === 'devolucion' ? 'Devolución' : 'Anulación', s.motivo, peso(s.efectivoDevueltoCents), (c.decisiones || {})[s.id] || 'pendiente']);
-    for(const t of q.transferencias) T.push([c.fecha, c.puestoNombre, 'T-' + String(t.num).padStart(3, '0'), t.metodo === 'qr' ? 'QR' : 'Transferencia', peso(t.cup), c.capturas[t.ventaId] ? 'Sí' : 'No', (c.transfOk || {})[t.ventaId] ? 'Sí' : 'No']);
+    for(const t of q.transferencias) T.push([c.fecha, c.puestoNombre, 'T-' + String(t.num).padStart(3, '0'), t.metodo === 'qr' ? 'QR' : 'Transferencia', peso(t.cup), t.codigo || '', c.capturas[t.ventaId] ? 'Sí' : 'No', (c.transfOk || {})[t.ventaId] ? 'Sí' : 'No']);
     for(const x of C.comisiones(N.personas, c.puestoId, q.netoCup)) K.push([c.fecha, c.puestoNombre, x.nombre, x.pct, peso(x.cup)]);
   }
   const Co = [['Fecha', 'Proveedor', 'Artículo', 'Cantidad', 'Unidad', 'Costo', 'Moneda', 'Tasa', 'Costo en CUP']];

@@ -114,7 +114,7 @@ export function calcularCuadre(ventas, solicitudes, fondoCents){
     for(const p of v.pagos){
       r.porMetodo[p.metodo] = (r.porMetodo[p.metodo] || 0) + p.cup;
       if(p.metodo === 'efectivo') r.esperado[p.moneda] = (r.esperado[p.moneda] || 0) + p.monto;
-      if(p.metodo === 'transferencia' || p.metodo === 'qr') r.transferencias.push({ventaId:v.id, num:v.num, hora:v.ts, cup:p.cup, metodo:p.metodo});
+      if(p.metodo === 'transferencia' || p.metodo === 'qr') r.transferencias.push({ventaId:v.id, num:v.num, hora:v.ts, cup:p.cup, metodo:p.metodo, codigo:p.codigo || ''});
       if(p.metodo === 'fiado') r.fiado.push({ventaId:v.id, num:v.num, cliente:p.cliente || '', cup:p.cup});
     }
     if(v.vueltoCents){ r.esperado.CUP -= v.vueltoCents; r.porMetodo.efectivo = (r.porMetodo.efectivo || 0) - v.vueltoCents; }

@@ -8,7 +8,7 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.4.1';
+const VERSION_APP = '0.4.2';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -364,7 +364,7 @@ async function vReporte(){
   const stock = Object.entries(c.restante || {}).map(([id, r]) => { const p = N.productos.find(x => x.id === id); const mm = p ? mermaDe(p.nombre) : 0; const quedan = r.entregado - r.vendido - mm;
     return h('tr', {}, h('td', {}, p ? p.nombre : id.slice(0, 6)), h('td', {class:'num'}, C.cantidad(r.entregado)), h('td', {class:'num'}, C.cantidad(r.vendido)), h('td', {class:'num'}, mm ? C.cantidad(mm) : ''), h('td', {class:'num ' + (quedan < 0 ? 'mal' : '')}, C.cantidad(quedan))); });
   const com = C.comisiones(N.personas, c.puestoId, q.netoCup);
-  const trans = q.transferencias.map(t => h('label', {class:'lin', style:'cursor:pointer'}, h('span', {}, ticket(t.num) + ' · ' + C.horaDe(t.hora) + ' · ' + (t.metodo === 'qr' ? 'QR' : 'Transferencia'), h('div', {class:'d num'}, C.dinero(t.cup) + (c.capturas[t.ventaId] ? ' · mandó captura' : ' · sin captura'))),
+  const trans = q.transferencias.map(t => h('label', {class:'lin', style:'cursor:pointer'}, h('span', {}, ticket(t.num) + ' · ' + C.horaDe(t.hora) + ' · ' + (t.metodo === 'qr' ? 'QR' : 'Transferencia'), h('div', {class:'d num'}, C.dinero(t.cup) + (t.codigo ? ' · código ' + t.codigo : ' · sin código') + (c.capturas[t.ventaId] ? ' · mandó captura' : ' · sin captura'))),
     h('span', {}, 'Llegó ', h('input', {type:'checkbox', disabled:SOLO, style:'width:26px;min-height:26px;vertical-align:middle', checked:!!c.transfOk[t.ventaId], onchange:async e => { c.transfOk[t.ventaId] = e.target.checked; await db.put('cierres', c); }}))));
   const sol = (c.solicitudes || []).map(s => { const dec = c.decisiones[s.id];
     return h('div', {class:'card'}, h('div', {class:'fila top'}, h('div', {}, h('b', {}, (s.tipo === 'devolucion' ? 'Devolución' : 'Anulación') + ' del ' + ticket(s.num)), h('div', {class:'ayuda'}, s.motivo + ' · devolvió ' + C.dinero(s.efectivoDevueltoCents))),

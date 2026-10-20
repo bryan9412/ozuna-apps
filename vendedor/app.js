@@ -2,7 +2,7 @@
 import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar, icono, avisoAccion } from '../shared/ui.js';
 
-const VERSION_APP = '0.4.1';
+const VERSION_APP = '0.4.2';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -407,6 +407,8 @@ function abrirCobro(){
       resumen.className = 'total' + (c.falta ? ' falta' : '');
       resumen.replaceChildren(h('span', {}, c.falta ? 'Falta por pagar' : c.vuelto ? 'Dale de vuelto' : 'Pago completo'), h('b', {class:'num'}, c.falta ? C.dinero(c.falta) : C.dinero(c.vuelto))); };
     const montoInput = (p, ph) => h('input', {inputmode:'decimal', placeholder:ph || '0', value:p.monto, 'aria-label':'Monto en ' + p.moneda, oninput:e => { p.monto = e.target.value; p._editado = true; pintaResumen(); }});
+    /* El banco manda un código al cliente por SMS; sin él no se cierra la venta (20/10/2026, a pedido del dueño). */
+    const campoCodigo = p => campo('Código de la transferencia (el que le llegó al cliente por SMS)', h('input', {value:p.codigo || '', placeholder:'Ej. TM8F3K21', autocapitalize:'characters', autocomplete:'off', 'aria-label':'Código de la transferencia', oninput:e => { p.codigo = e.target.value; }}));
     const panel = () => {
       const t = total(), p = st.pagos[0];
       if(st.modo === 'efectivo'){
@@ -414,13 +416,13 @@ function abrirCobro(){
         return h('div', {class:'card'}, campo('El cliente da (pesos)', montoInput(p)),
           h('div', {class:'rapidos'}, h('button', {onclick:() => { p.monto = String(t / 100); p._editado = false; draw(); }}, 'Exacto'), redondos.map(x => h('button', {onclick:() => { p.monto = String(x / 100); p._editado = true; draw(); }}, C.dinero(x)))));
       }
-      if(st.modo === 'transferencia' || st.modo === 'qr') return h('div', {class:'card'}, campo('Monto recibido por ' + (st.modo === 'qr' ? 'QR' : 'transferencia') + ' (pesos)', montoInput(p)), h('p', {class:'ayuda'}, 'Después manda la captura al dueño desde «Ventas».'));
+      if(st.modo === 'transferencia' || st.modo === 'qr') return h('div', {class:'card'}, campo('Monto recibido por ' + (st.modo === 'qr' ? 'QR' : 'transferencia') + ' (pesos)', montoInput(p)), campoCodigo(p), h('p', {class:'ayuda'}, 'Pídele al cliente que te enseñe el SMS y copia el código. Después manda la captura al dueño desde «Ventas».'));
       if(st.modo.startsWith('usd:')){ const m = st.modo.slice(4); return h('div', {class:'card'}, campo('El cliente da (' + m + ')', montoInput(p)), h('p', {class:'ayuda num'}, '1 ' + m + ' = ' + C.dinero(tasaDe(m)) + ' CUP · equivale a ' + C.dinero(C.aCup(C.aCentavos(p.monto) || 0, tasaDe(m))) + ' CUP. El vuelto se da en pesos.')); }
       if(st.modo === 'fiado') return h('div', {class:'card'}, campo('Nombre del cliente', h('input', {value:p.cliente || '', placeholder:'¿A quién se le fía?', oninput:e => { p.cliente = e.target.value; }})),
         campo('Clave del dueño', h('input', {type:'password', inputmode:'numeric', placeholder:'Solo el dueño la sabe', oninput:e => { p.pin = e.target.value; }}), 'Un fiado necesita que el dueño lo autorice con su clave.'));
       return h('div', {}, ...st.pagos.map((q, i) => h('div', {class:'card'}, h('div', {class:'fila'}, h('b', {}, etiqueta(q)), st.pagos.length > 1 ? h('button', {class:'icon-btn', 'aria-label':'Quitar este pago', onclick:() => { st.pagos.splice(i, 1); draw(); }}, icono('cerrar', 22)) : null),
           h('div', {class:'fila', style:'margin-top:8px'}, montoInput(q), h('button', {class:'btn chico suave', onclick:() => { const c = calc(); const falta = Math.max(0, total() - (c.suma - q._cup)); q.monto = String(Math.ceil(falta * 100 / tasaDe(q.moneda)) / 100); q._editado = true; draw(); }}, 'Lo que falta')),
-          q.metodo === 'fiado' ? [campo('Nombre del cliente', h('input', {value:q.cliente || '', placeholder:'¿A quién se le fía?', oninput:e => { q.cliente = e.target.value; }})), campo('Clave del dueño', h('input', {type:'password', inputmode:'numeric', placeholder:'Solo el dueño la sabe', oninput:e => { q.pin = e.target.value; }}))] : null)),
+          q.metodo === 'fiado' ? [campo('Nombre del cliente', h('input', {value:q.cliente || '', placeholder:'¿A quién se le fía?', oninput:e => { q.cliente = e.target.value; }})), campo('Clave del dueño', h('input', {type:'password', inputmode:'numeric', placeholder:'Solo el dueño la sabe', oninput:e => { q.pin = e.target.value; }}))] : null, q.metodo === 'transferencia' || q.metodo === 'qr' ? campoCodigo(q) : null)),
         h('div', {class:'opts'}, h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'efectivo', moneda:'CUP', monto:''}); draw(); }}, '+ Efectivo'), h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'transferencia', moneda:'CUP', monto:''}); draw(); }}, '+ Transferencia'),
           h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'qr', moneda:'CUP', monto:''}); draw(); }}, '+ QR'), monedas.map(m => h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'efectivo', moneda:m, monto:''}); draw(); }}, '+ ' + m)),
           dia.clave ? h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'fiado', moneda:'CUP', monto:'', cliente:'', pin:''}); draw(); }}, '+ Fiado') : null));
@@ -443,6 +445,7 @@ function abrirCobro(){
         const tot = total();
         if(dom.on && !dom.direccion.trim()){ aviso('Escribe la dirección del pedido.', true); return; }
         let efectivo = 0, otros = 0; const pg = [];
+        const usados = new Set((await ventasDia()).flatMap(v => v.pagos.map(x => x.codigo).filter(Boolean)));
         for(const p of lista){
           const m = C.aCentavos(p.monto); if(isNaN(m) || m <= 0){ if(lista.length > 1 && (p.monto === '' || p.monto === undefined)) continue; aviso('Revisa el monto de ' + etiqueta(p), true); return; }
           const tasa = tasaDe(p.moneda); if(!tasa){ aviso('No hay cambio para ' + p.moneda + '. Pídele al dueño que lo ponga.', true); return; }
@@ -452,7 +455,14 @@ function abrirCobro(){
             const hh = await C.hashClave(String(p.pin || ''), dia.clave.sal);
             if(hh !== dia.clave.hash){ aviso('La clave del dueño no es correcta.', true); return; }
           }
-          pg.push({metodo:p.metodo, moneda:p.moneda, monto:m, tasa, cup, cliente:p.metodo === 'fiado' ? p.cliente.trim() : undefined});
+          let codigo;
+          if(p.metodo === 'transferencia' || p.metodo === 'qr'){
+            codigo = (p.codigo || '').trim().toUpperCase().replace(/s+/g, '');
+            if(codigo.length < 4){ aviso('Escribe el código de la transferencia (el del SMS del cliente).', true); return; }
+            if(usados.has(codigo)){ aviso('Ese código ya se usó en otra venta. Revisa el SMS.', true); return; }
+            usados.add(codigo);
+          }
+          pg.push({metodo:p.metodo, moneda:p.moneda, monto:m, tasa, cup, cliente:p.metodo === 'fiado' ? p.cliente.trim() : undefined, codigo});
           if(p.metodo === 'efectivo') efectivo += cup; else otros += cup;
         }
         if(!pg.length){ aviso('Pon cómo pagó el cliente.', true); return; }
@@ -545,7 +555,7 @@ function detalleVenta(v, sol){
     return h('div', {},
       h('div', {class:'card'}, v.lineas.map(l => h('div', {class:'lin'}, h('span', {}, l.nombre, h('div', {class:'d num'}, C.cantidad(l.qtyMilli) + ' × ' + C.dinero(l.precioCents) + (l.lista ? ' · precio especial' : '') + (l.agregos && l.agregos.length ? ' · ' + l.agregos.map(a => a.nombre + ' ×' + a.cant).join(', ') : ''))), h('b', {class:'num'}, C.dinero(l.importeCents + (l.agregos || []).reduce((s, a) => s + a.precioCents * a.cant, 0))))),
         h('div', {class:'lin'}, h('b', {}, 'Total'), h('b', {class:'num'}, C.dinero(v.totalCents)))),
-      h('div', {class:'card'}, h('h3', {}, 'Cómo pagó'), v.pagos.map(p => h('div', {class:'lin'}, h('span', {}, (NOMBRE_PAGO[p.metodo] || p.metodo) + (p.metodo === 'efectivo' ? ' ' + p.moneda : '') + (p.cliente ? ' · ' + p.cliente : '')), h('b', {class:'num'}, C.dinero(p.monto) + (p.moneda !== 'CUP' ? ' ' + p.moneda : '')))),
+      h('div', {class:'card'}, h('h3', {}, 'Cómo pagó'), v.pagos.map(p => h('div', {class:'lin'}, h('span', {}, (NOMBRE_PAGO[p.metodo] || p.metodo) + (p.metodo === 'efectivo' ? ' ' + p.moneda : '') + (p.cliente ? ' · ' + p.cliente : ''), p.codigo ? h('div', {class:'d num'}, 'Código ' + p.codigo) : null), h('b', {class:'num'}, C.dinero(p.monto) + (p.moneda !== 'CUP' ? ' ' + p.moneda : '')))),
         v.vueltoCents ? h('div', {class:'lin'}, h('span', {}, 'Vuelto'), h('b', {class:'num'}, C.dinero(v.vueltoCents))) : null),
       v.domicilio ? h('div', {class:'card'}, h('h3', {}, 'Domicilio'), h('p', {}, v.domicilio.direccion), v.domicilio.mensajero ? h('p', {class:'ayuda'}, 'Mensajero: ' + v.domicilio.mensajero) : null) : null,
       pedidos.map(s => h('div', {class:'card aviso-c'}, h('b', {}, (s.tipo === 'devolucion' ? 'Devolución' : 'Anulación') + ' pedida'), h('div', {}, s.motivo + ' · devolviste ' + C.dinero(s.efectivoDevueltoCents)))),

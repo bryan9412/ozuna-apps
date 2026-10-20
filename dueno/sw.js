@@ -1,5 +1,5 @@
 /* Service worker del dueño: guarda la app para usarla sin internet y recibe archivos desde «Compartir». */
-const VERSION = '0.4.1';
+const VERSION = '0.4.2';
 const CACHE = 'ozuna-dueno-' + VERSION;
 const BANDEJA = 'ozuna-bandeja-dueno';
 const ARCHIVOS = ['./', './index.html', './app.js', './datos.js', './ops.js', './reportes.js', './ficha.js', './merge.js', './sync.js', './manifest.webmanifest', '../shared/core.js', '../shared/ui.js', '../shared/tema.js', '../shared/xlsx.js', '../shared/estilos.css', '../iconos/cuentas-192.png', '../iconos/cuentas-512.png', '../iconos/cuentas-maskable-512.png'];
