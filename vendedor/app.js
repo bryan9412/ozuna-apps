@@ -2,7 +2,7 @@
 import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW } from '../shared/ui.js';
 
-const VERSION_APP = '0.1.0';
+const VERSION_APP = '0.1.1';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -354,7 +354,7 @@ async function enviarCierre(){
 async function vMas(){
   const enlaceTxt = async () => C.sobreATexto(await C.firmarSobre('enlace', perfil, null, {nombre:perfil.nombre}, llaves.privateKey));
   montar(raiz, banner(), h('h1', {}, 'Más'),
-    h('div', {class:'card'}, h('h3', {}, perfil.nombre), h('p', {class:'ayuda'}, confianza ? 'Enlazada con el dueño «' + confianza.nombre + '» (huella ' + confianza.huella + ').' : 'Todavía no estás enlazada con ningún dueño.'),
+    h('div', {class:'card'}, h('h3', {}, perfil.nombre), h('p', {class:'ayuda'}, 'Mi huella: ', h('b', {id:'mi-huella'}, '…'), ' (el dueño te la pide para comprobar que eres tú)'), h('p', {class:'ayuda'}, confianza ? 'Enlazada con el dueño «' + confianza.nombre + '» (huella ' + confianza.huella + ').' : 'Todavía no estás enlazada con ningún dueño.'),
       h('button', {class:'btn', onclick:async () => { const r = await C.enviarArchivo('enlace-' + perfil.nombre.toLowerCase().replace(/\W+/g, '-') + '.txt', await enlaceTxt()); if(r === 'descargado') aviso('Se guardó en Descargas. Mándaselo al dueño por WhatsApp.'); }}, 'Mandar mi código de enlace al dueño'),
       h('p', {class:'ayuda'}, 'Solo hace falta una vez. El dueño lo carga en su teléfono y te manda la primera entrega.')),
     cajaCarga(),
@@ -363,6 +363,7 @@ async function vMas(){
         const r = await C.enviarArchivo('copia-vendedor-' + C.hoy() + '.txt', t); if(r === 'descargado') aviso('Se guardó en Descargas.'); }}, 'Guardar o mandar una copia'),
       h('button', {class:'btn suave', onclick:restaurar}, 'Recuperar una copia')),
     h('p', {class:'ayuda'}, 'Ozuna Vendedora · versión ' + VERSION_APP));
+  C.huella(perfil.pub).then(f => { const e = document.getElementById('mi-huella'); if(e) e.textContent = f; });
 }
 async function restaurar(){
   const t = await C.elegirArchivo(); if(!t) return;
