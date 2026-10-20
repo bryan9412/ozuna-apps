@@ -8,7 +8,7 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.4.4';
+const VERSION_APP = '0.4.5';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -137,7 +137,7 @@ async function procesarTexto(txt){
 /* Cambios de otro teléfono del dueño: tiene que venir firmado con la misma llave. */
 async function recibirSync(env){
   const v = await C.verificarSobre(env, perfil.pub);
-  if(!v.ok){ aviso(v.motivo.indexOf('no viene de quien') >= 0 ? 'Ese paquete no es de tu negocio.' : v.motivo, true); return; }
+  if(!v.ok){ aviso(v.motivo.indexOf('no viene de quien') >= 0 ? 'Este teléfono tiene otra llave, no la del dueño. Primero carga la copia completa del dueño: Más → Ajustes y copia → «Recuperar una copia».' : v.motivo, true); return; }
   const r = await aplicarSync(db, N, env.payload); await guardarN();
   const partes = []; if(r.nuevos) partes.push(r.nuevos + ' nuevos'); if(r.actualizados) partes.push(r.actualizados + ' al día'); if(r.config) partes.push('catálogo y ajustes');
   aviso(partes.length ? 'Cambios cargados: ' + partes.join(', ') + '.' : 'Ya tenías todo lo que traía.'); pintar();
