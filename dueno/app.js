@@ -6,7 +6,7 @@ import { vTraspasos, vCompras, vGastos, vCasa, vConteo, vMerma, vFiado } from '.
 import { vHistorial, vReportes, exportarExcel } from './reportes.js';
 import { abrirFicha } from './ficha.js';
 
-const VERSION_APP = '0.2.1';
+const VERSION_APP = '0.2.2';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno');
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -294,7 +294,7 @@ async function vReporte(){
     h('div', {class:'card', style:'margin-top:10px'}, filaDato('Vendido', C.dinero(q.ventasCup)), q.devueltoCup ? filaDato('Devuelto', '-' + C.dinero(q.devueltoCup)) : null,
       filaDato('Efectivo', C.dinero(q.porMetodo.efectivo || 0)), filaDato('Transferencia y QR', C.dinero((q.porMetodo.transferencia || 0) + (q.porMetodo.qr || 0))), q.porMetodo.fiado ? filaDato('Fiado', C.dinero(q.porMetodo.fiado)) : null),
     h('h2', {}, 'Cuadre de la caja'), h('div', {class:'card'}, cuadre),
-    h('h2', {}, 'Ganancia aproximada'), h('div', {class:'card'}, filaDato('Ventas netas', C.dinero(g.neto)), filaDato('Costo de lo vendido', '-' + C.dinero(g.costo)), filaDato('Comisiones', '-' + C.dinero(g.comisiones)), filaDato('Ganancia', C.dinero(g.ganancia), g.ganancia < 0 ? 'mal' : 'bien'),
+    h('h2', {}, 'Ganancia aproximada'), h('div', {class:'card'}, filaDato('Ventas netas', C.dinero(g.neto)), filaDato('Costo de lo vendido', g.costo ? '-' + C.dinero(g.costo) : '0'), filaDato('Comisiones', g.comisiones ? '-' + C.dinero(g.comisiones) : '0'), filaDato('Ganancia', C.dinero(g.ganancia), g.ganancia < 0 ? 'mal' : 'bien'),
       g.sinCosto.length ? h('p', {class:'ayuda'}, 'No cuenta el costo de: ' + g.sinCosto.join(', ') + '.') : null),
     com.length ? [h('h2', {}, 'Comisiones'), h('div', {class:'card'}, com.map(x => filaDato(x.nombre + ' (' + x.pct + ' %)', C.dinero(x.cup))))] : null,
     trans.length ? [h('h2', {}, 'Transferencias y QR'), SOLO ? null : h('p', {class:'ayuda'}, 'Marca las que ya viste llegar a tu cuenta.'), h('div', {class:'card'}, trans)] : null,

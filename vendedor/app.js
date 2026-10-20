@@ -2,7 +2,7 @@
 import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema } from '../shared/ui.js';
 
-const VERSION_APP = '0.2.1';
+const VERSION_APP = '0.2.2';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -217,8 +217,8 @@ function abrirCarrito(){
       const especial = !cartAuth
         ? h('button', {class:'btn suave', onclick:async () => { if(await pedirClave('Solo el dueño puede dar un precio especial.')){ cartAuth = true; draw(); } }}, 'Precio especial (clave del dueño)')
         : h('div', {class:'card'}, h('b', {}, 'Precio especial autorizado'),
-            dia.listas.length ? h('div', {class:'opts'}, h('button', {class:'op', 'aria-pressed':!cartLista, onclick:() => { cartLista = null; cart.forEach(l => delete l.precio); repinta(); }}, 'Precio normal'),
-              dia.listas.map(x => h('button', {class:'op', 'aria-pressed':!!cartLista && cartLista.id === x.id, onclick:() => { cartLista = x; cart.forEach(l => delete l.precio); repinta(); }}, x.nombre + ' −' + x.pct + ' %'))) : null,
+            (dia.listas || []).length ? h('div', {class:'opts'}, h('button', {class:'op', 'aria-pressed':!cartLista, onclick:() => { cartLista = null; cart.forEach(l => delete l.precio); repinta(); }}, 'Precio normal'),
+              (dia.listas || []).map(x => h('button', {class:'op', 'aria-pressed':!!cartLista && cartLista.id === x.id, onclick:() => { cartLista = x; cart.forEach(l => delete l.precio); repinta(); }}, x.nombre + ' −' + x.pct + ' %'))) : null,
             h('p', {class:'ayuda'}, 'También puedes cambiar el precio de cada producto aquí abajo.'));
       cuerpo.replaceChildren(...cart.map((l, i) => {
         const p = prod(l.pid); const peso = C.MEDIDAS[p.medida].peso;
