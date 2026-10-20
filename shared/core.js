@@ -186,13 +186,20 @@ export function nombreArchivo(tipo, ...partes){
   const limpio = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '');
   return ['Ozuna', tipo, ...partes.filter(Boolean).map(limpio), hoy() + '_' + hora].join('_') + '.txt';
 }
-/* Elegir varios archivos a la vez (el selector de Android abre en «Recientes», donde está lo último que bajó WhatsApp). */
-export function elegirArchivos(){
+/* Selector de archivos. 20/10/2026: el <input> va metido en la página mientras el selector está abierto; suelto (sin colgar de nada) Android lo recoge y el «onchange» nunca llega: se veía como «no hizo nada». */
+function selector(multiple){
   return new Promise(res => {
-    const i = document.createElement('input'); i.type = 'file'; i.multiple = true; i.accept = '.txt,.json,text/plain,application/json';
-    i.onchange = async () => { const out = []; for(const f of i.files) out.push({nombre:f.name, texto:await f.text()}); res(out); };
-    i.addEventListener('cancel', () => res([])); i.click();
+    const i = document.createElement('input'); i.type = 'file'; i.multiple = !!multiple; i.accept = '.txt,.json,text/plain,application/json'; i.style.cssText = 'position:fixed;left:-9999px;opacity:0';
+    const fin = r => { i.remove(); res(r); };
+    i.addEventListener('change', () => fin(Array.from(i.files || [])));
+    i.addEventListener('cancel', () => fin([]));
+    document.body.appendChild(i); i.click();
   });
+}
+async function leerArchivo(f){ try { return await f.text(); } catch(e){ return await new Promise(res => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(''); r.readAsText(f); }); } }
+/* Elegir varios archivos a la vez (el selector de Android abre en «Recientes», donde está lo último que bajó WhatsApp). */
+export async function elegirArchivos(){
+  const fs = await selector(true); const out = []; for(const f of fs) out.push({nombre:f.name, texto:await leerArchivo(f)}); return out;
 }
 export async function leerPortapapeles(){ try { return await navigator.clipboard.readText(); } catch(e){ return null; } }
 /* Igual que enviarArchivo, pero para archivos de verdad (Excel, CSV). */
@@ -211,13 +218,7 @@ export async function copiarTexto(texto){
     let ok = false; try { ok = document.execCommand('copy'); } catch(e2){} ta.remove(); return ok;
   }
 }
-export function elegirArchivo(){
-  return new Promise(res => {
-    const i = document.createElement('input'); i.type = 'file'; i.accept = '.txt,.json,text/plain,application/json';
-    i.onchange = () => { const f = i.files[0]; if(!f) return res(null); const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsText(f); };
-    i.addEventListener('cancel', () => res(null)); i.click();
-  });
-}
+export async function elegirArchivo(){ const fs = await selector(false); return fs.length ? await leerArchivo(fs[0]) : null; }
 /* Lo que llega por «Compartir» desde WhatsApp lo guarda el service worker en una bandeja. */
 export async function leerBandeja(nombreCache){
   const out = [];

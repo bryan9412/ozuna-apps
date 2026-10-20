@@ -2,7 +2,7 @@
 import * as C from '../shared/core.js';
 import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar, icono, avisoAccion } from '../shared/ui.js';
 
-const VERSION_APP = '0.4.3';
+const VERSION_APP = '0.4.4';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
@@ -78,6 +78,7 @@ function pegarTexto(){
 }
 /* Varios archivos a la vez: se cargan en el orden en que se crearon, no en el orden en que se eligieron. */
 async function procesarVarios(textos){
+  aviso("Leyendo "+textos.length+(textos.length===1?" archivo…":" archivos…"));
   const lista = []; for(const t of textos){ const e = C.leerTexto(t); if(e) lista.push({e, t}); else aviso('Un archivo no es de Ozuna y se saltó.', true); }
   lista.sort((a, b) => String(a.e.creado).localeCompare(String(b.e.creado)));
   for(const x of lista) await procesarTexto(x.t);

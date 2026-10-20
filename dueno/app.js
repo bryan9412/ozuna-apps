@@ -8,7 +8,7 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.4.3';
+const VERSION_APP = '0.4.4';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
@@ -120,6 +120,7 @@ function pegarTextoManual(){
 }
 /* Varios archivos a la vez: se cargan en el orden en que se crearon. */
 async function procesarVarios(textos){
+  aviso("Leyendo "+textos.length+(textos.length===1?" archivo…":" archivos…"));
   const lista = []; for(const t of textos){ const e = C.leerTexto(t); if(e) lista.push({e, t}); else aviso('Un archivo no es de Ozuna y se saltó.', true); }
   lista.sort((a, b) => String(a.e.creado).localeCompare(String(b.e.creado)));
   for(const x of lista) await procesarTexto(x.t);
