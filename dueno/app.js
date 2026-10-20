@@ -8,12 +8,12 @@ import { abrirFicha } from './ficha.js';
 import { sellarN, aplicarSync } from './merge.js';
 import { vSincronizar } from './sync.js';
 
-const VERSION_APP = '0.3.5';
+const VERSION_APP = '0.4.0';
 const BANDEJA = 'ozuna-bandeja-dueno';
 const db = new C.DB('ozuna-dueno', {mod:true});
 let perfil, llaves, N, pantalla = 'hoy', masSub = null, fechaVista = C.hoy(), reporteId = null, desbloqueado = false, hayVersionNueva = null, tabPuesto = null;
-const NAV_TODO = [['hoy', '📊', 'Hoy'], ['entrega', '📦', 'Entrega'], ['cierres', '✅', 'Cierres'], ['catalogo', '🏷️', 'Catálogo'], ['mas', '⚙️', 'Más']];
-const NAV_SOLO = [['hoy', '📊', 'Hoy'], ['cierres', '✅', 'Cierres'], ['mas', '⚙️', 'Más']];
+const NAV_TODO = [['hoy', 'grafica', 'Hoy'], ['entrega', 'caja', 'Entrega'], ['cierres', 'check', 'Cierres'], ['catalogo', 'etiqueta', 'Catálogo'], ['mas', 'ajustes', 'Más']];
+const NAV_SOLO = [['hoy', 'grafica', 'Hoy'], ['cierres', 'check', 'Cierres'], ['mas', 'ajustes', 'Más']];
 const raiz = document.getElementById('app');
 const ticket = n => 'T-' + String(n).padStart(3, '0');
 const guardarN = () => { sellarN(N); return db.kvSet('negocio', N); };

@@ -1,14 +1,14 @@
 /* App de la vendedora: recibe la entrega, anota ventas sin conexión, pide devoluciones y manda el cierre. */
 import * as C from '../shared/core.js';
-import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar } from '../shared/ui.js';
+import { h, montar, aviso, hoja, confirmar, campo, barraNav, registrarSW, selectorTema, tarjetaActualizar, icono, avisoAccion } from '../shared/ui.js';
 
-const VERSION_APP = '0.3.5';
+const VERSION_APP = '0.4.0';
 const BANDEJA = 'ozuna-bandeja-vendedor';
 const db = new C.DB('ozuna-vendedor');
 const raiz = document.getElementById('app');
 let perfil, llaves, confianza, dia, pantalla = 'vender', cart = [], hayVersionNueva = null, ocupado = false;
 
-const NAV = [['vender', '🛒', 'Vender'], ['ventas', '🧾', 'Ventas'], ['cierre', '✅', 'Cierre'], ['mas', '⚙️', 'Más']];
+const NAV = [['vender', 'carrito', 'Vender'], ['ventas', 'recibo', 'Ventas'], ['cierre', 'check', 'Cierre'], ['mas', 'ajustes', 'Más']];
 const ticket = n => 'T-' + String(n).padStart(3, '0');
 const guardarDia = () => db.kvSet('dia', dia);
 
@@ -25,7 +25,9 @@ async function iniciar(){
   registrarSW('./sw.js', aplicar => { hayVersionNueva = aplicar; pintar(); });
   if(!perfil || !llaves) return bienvenida();
   C.pedirPersistencia();
+  await restaurarCarrito();
   await revisarBandeja();
+  window.addEventListener('online', () => { if(pantalla === 'vender') pintar(); }); window.addEventListener('offline', () => { if(pantalla === 'vender') pintar(); });
   pintar();
 }
 function bienvenida(){
@@ -49,7 +51,12 @@ function pintar(){
   montar(document.getElementById('navbox'), barraNav(NAV, pantalla, ir));
   pintarCarrito();
 }
-function ir(p){ pantalla = p; pintar(); window.scrollTo(0, 0); }
+/* Al cambiar de pestaña se recuerda dónde estabas en Vender y en Ventas, para volver al mismo punto. */
+function ir(p){
+  memoriaScroll[pantalla] = window.scrollY; pantalla = p;
+  if(p === 'vender' || p === 'ventas') pendienteScroll = memoriaScroll[p] || 0; else { pendienteScroll = null; window.scrollTo(0, 0); }
+  pintar();
+}
 function banner(){ return hayVersionNueva ? h('div', {class:'banner'}, 'Hay una versión nueva', h('button', {onclick:hayVersionNueva}, 'Actualizar')) : null; }
 function sinEntrega(){
   montar(raiz, banner(), h('p', {class:'marca'}, perfil.nombre), h('h1', {}, 'Buenos días'), h('p', {class:'ayuda'}, 'Para empezar, carga la entrega que te mandó el dueño por WhatsApp.'), cajaCarga());
@@ -170,7 +177,7 @@ function totalLinea(l){
   return t;
 }
 const totalCarrito = () => cart.reduce((s, l) => s + totalLinea(l), 0);
-function limpiarCarrito(){ cart = []; cartLista = null; cartAuth = false; }
+function limpiarCarrito(){ cart = []; cartLista = null; cartAuth = false; guardarCarrito(); }
 function textoCantidad(p, q){ return C.cantidad(q) + ' ' + C.nombreMedida(p.medida, q); }
 
 /* Pide la clave del dueño (fiado, precios especiales). Devuelve true o false. */
@@ -187,26 +194,66 @@ function pedirClave(motivo){
   });
 }
 
-let verAgotados = false;
+/* Catálogo: búsqueda local, categorías derivadas de los datos recibidos (sin tocar el catálogo del dueño) y favoritos a partir de las ventas guardadas en este teléfono. */
+let busqueda = '', categoria = 'todo', verAgotados = false, refrescarGrid = null, pendienteScroll = null;
+const memoriaScroll = {};
+const sinAcentos = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+const CATEGORIAS = [['favoritos', 'Favoritos'], ['pizzas', 'Pizzas'], ['bebidas', 'Bebidas'], ['carnicos', 'Cárnicos'], ['otros', 'Otros']];
+function categoriaDe(p){
+  const n = sinAcentos(p.nombre); const m = C.MEDIDAS[p.medida];
+  if(/pizza/.test(n)) return 'pizzas';
+  if(/refresco|jugo|batido|agua|malta|cerveza|limonada|bebida|cafe|\bte\b/.test(n)) return 'bebidas';
+  if((m && m.peso) || p.medida === 'paquete' || /pollo|cerdo|carne|res\b|picadillo|salchicha|hamburguesa|chorizo|costilla|bistec/.test(n)) return 'carnicos';
+  return 'otros';
+}
+/* Los 6 productos más vendidos en este teléfono (mínimo 3 ventas). Si todavía no hay historia, no hay favoritos: no se inventa nada. */
+async function favoritosIds(){
+  const cuenta = {}; for(const v of await db.todos('ventas')) for(const l of v.lineas) if(l.productoId !== 'envio') cuenta[l.productoId] = (cuenta[l.productoId] || 0) + 1;
+  return Object.entries(cuenta).filter(([id, n]) => n >= 3 && prod(id)).sort((a, b) => b[1] - a[1]).slice(0, 6).map(x => x[0]);
+}
+const enCarrito = pid => cart.filter(l => l.pid === pid).reduce((s, l) => s + l.qty, 0);
+
 async function vVender(){
   if(!dia) return sinEntrega();
-  const ventas = await ventasDia(); const vend = vendidoMilli(ventas);
-  const info = dia.catalogo.map(p => ({p, rest:(dia.cantidades[p.id] || 0) - (vend[p.id] || 0)}));
+  const y = pendienteScroll != null ? pendienteScroll : window.scrollY; pendienteScroll = null;
+  const ventas = await ventasDia(); const vend = vendidoMilli(ventas); const favs = await favoritosIds();
+  const info = dia.catalogo.map(p => ({p, rest:(dia.cantidades[p.id] || 0) - (vend[p.id] || 0), cat:categoriaDe(p), fav:favs.includes(p.id)}));
   const agotado = x => x.p.controlStock && x.rest <= 0;
-  const visibles = info.filter(x => !agotado(x)), ocultos = info.filter(agotado);
+  const cats = [['todo', 'Todo'], ...CATEGORIAS.filter(([id]) => id === 'favoritos' ? favs.length : info.some(x => x.cat === id))];
+  if(!cats.some(c => c[0] === categoria)) categoria = 'todo';
+  const rejilla = h('div', {class:'rejilla2'}); const chips = h('div', {class:'chips', role:'group', 'aria-label':'Categorías'});
   const tile = x => {
-    const p = x.p; const cls = 'prod' + (agotado(x) ? ' agotado' : p.controlStock && x.rest < 3000 ? ' poco' : '');
-    return h('button', {class:cls, onclick:() => agotado(x) ? aviso(p.nombre + ' está agotado. Si crees que hay, avisa en «Ver existencia».', true) : tocarProducto(p, x.rest)},
-      h('b', {}, p.nombre), h('span', {class:'pr num'}, C.dinero(p.precioCents) + ' la ' + C.nombreMedida(p.medida, 1000)),
-      p.controlStock ? h('span', {class:'qd'}, agotado(x) ? 'Agotado' : 'Quedan ' + textoCantidad(p, x.rest)) : null);
+    const p = x.p, q = enCarrito(p.id), peso = C.MEDIDAS[p.medida] && C.MEDIDAS[p.medida].peso;
+    const pocas = p.controlStock && !agotado(x) && x.rest < 3000;
+    return h('button', {class:'pt' + (q ? ' en' : '') + (pocas ? ' poco' : '') + (agotado(x) ? ' agotado' : ''), 'aria-label':p.nombre + ', ' + C.dinero(p.precioCents) + (q ? ', en el pedido ' + C.cantidad(q) : ''),
+      onclick:() => agotado(x) ? aviso(p.nombre + ' está agotado. Si crees que hay, avisa en «Ver existencia y corregir».', true) : tocarProducto(p, x.rest)},
+      q ? h('span', {class:'pt-n'}, C.cantidad(q) + (peso ? ' ' + (p.medida === 'kilo' ? 'kg' : 'lb') : '')) : null,
+      h('b', {}, p.nombre), h('span', {class:'pp num'}, C.dinero(p.precioCents) + (peso ? ' / ' + C.MEDIDAS[p.medida].s : '')),
+      agotado(x) ? h('span', {class:'ps'}, 'Agotado') : pocas ? h('span', {class:'ps'}, icono('alerta', 14), ' Quedan pocas: ' + C.cantidad(x.rest)) : p.controlStock ? h('span', {class:'ps'}, 'Quedan ' + textoCantidad(p, x.rest)) : null);
   };
+  const pintaGrid = () => {
+    const q = sinAcentos(busqueda);
+    const filtrados = info.filter(x => (!q || sinAcentos(x.p.nombre).includes(q)) && (categoria === 'todo' || (categoria === 'favoritos' ? x.fav : x.cat === categoria)));
+    const ordenados = categoria === 'todo' ? [...filtrados.filter(x => x.fav), ...filtrados.filter(x => !x.fav)] : filtrados;
+    const visibles = ordenados.filter(x => !agotado(x)), ocultos = ordenados.filter(agotado);
+    rejilla.replaceChildren(...(visibles.length ? visibles.map(tile) : [h('div', {class:'card aviso-c', style:'grid-column:1/-1'}, !dia.catalogo.length ? 'El dueño todavía no puso productos en la entrega.' : q ? 'No hay productos que se llamen así.' : 'No hay productos disponibles aquí.')]),
+      ...(ocultos.length ? [h('button', {class:'enlace', style:'grid-column:1/-1;text-align:left', onclick:() => { verAgotados = !verAgotados; pintaGrid(); }}, (verAgotados ? 'Ocultar' : 'Ver') + ' agotados (' + ocultos.length + ')')] : []),
+      ...(verAgotados ? ocultos.map(tile) : []));
+    chips.replaceChildren(...cats.map(([id, nombre]) => h('button', {class:'op', 'aria-pressed':categoria === id, onclick:() => { categoria = id; pintaGrid(); }}, nombre)));
+  };
+  refrescarGrid = pintaGrid;
   const neto = ventas.reduce((s, v) => s + v.totalCents, 0);
-  montar(raiz, banner(), h('p', {class:'marca'}, dia.puesto.nombre + ' · ' + C.fechaBonita(dia.fecha)), h('h1', {}, '¿Qué se vendió?'),
-    visibles.length ? h('div', {class:'rejilla'}, visibles.map(tile)) : h('div', {class:'card aviso-c'}, dia.catalogo.length ? 'Todo lo que te mandaron está agotado.' : 'El dueño todavía no puso productos en la entrega.'),
-    ocultos.length ? [h('button', {class:'enlace', onclick:() => { verAgotados = !verAgotados; pintar(); }}, (verAgotados ? 'Ocultar' : 'Ver') + ' agotados (' + ocultos.length + ')'), verAgotados ? h('div', {class:'rejilla'}, ocultos.map(tile)) : null] : null,
-    h('div', {class:'total'}, h('span', {}, 'Llevas vendido'), h('b', {class:'num'}, C.dinero(neto))),
+  const buscador = h('input', {type:'search', placeholder:'Buscar producto', value:busqueda, 'aria-label':'Buscar producto', autocomplete:'off', oninput:e => { busqueda = e.target.value; limpiar.hidden = !busqueda; pintaGrid(); }});
+  const limpiar = h('button', {class:'x', 'aria-label':'Borrar la búsqueda', hidden:!busqueda, onclick:() => { busqueda = ''; buscador.value = ''; limpiar.hidden = true; pintaGrid(); buscador.focus(); }}, icono('cerrar', 20));
+  pintaGrid();
+  montar(raiz, banner(),
+    h('div', {class:'cab'}, h('div', {}, h('b', {}, dia.puesto.nombre), h('span', {class:'ayuda'}, ' · ' + C.fechaBonita(dia.fecha))), !navigator.onLine ? h('span', {class:'etq warn'}, 'Sin internet · funciona igual') : h('span', {class:'ayuda num'}, 'Vendido ' + C.dinero(neto))),
+    h('div', {class:'buscar'}, icono('buscar', 20), buscador, limpiar), chips, rejilla,
     dia.catalogo.some(p => p.controlStock) ? h('button', {class:'enlace', onclick:abrirExistencia}, 'Ver existencia y corregir') : null);
+  window.scrollTo(0, y);
 }
+
+
 /* Existencia: lo que te dieron, lo vendido y lo que queda. Si hay menos de lo anotado, se corrige aquí y el dueño lo ve en el cierre. */
 async function abrirExistencia(){
   const ventas = await ventasDia(); const vend = vendidoMilli(ventas);
@@ -232,120 +279,172 @@ function corregirExistencia(p, rest){
       }}, 'Guardar'));
   });
 }
+/* El pedido vive en memoria y también en este teléfono (sin precios especiales ni autorizaciones): si la página se recarga, no se pierde. */
+let guardandoCarrito = null;
+function guardarCarrito(){
+  clearTimeout(guardandoCarrito);
+  guardandoCarrito = setTimeout(() => { if(dia) db.kvSet('carrito', {id:'carrito', diaId:dia.entregaId, lineas:cart.map(l => ({pid:l.pid, qty:l.qty, ag:l.ag || {}}))}).catch(() => {}); }, 150);
+}
+async function restaurarCarrito(){
+  const c = await db.kv('carrito'); if(!c || !dia || c.diaId !== dia.entregaId) return;
+  cart = (c.lineas || []).filter(l => prod(l.pid)).map(l => ({pid:l.pid, qty:l.qty, ag:l.ag || {}}));
+}
+function cambioCarrito(){ guardarCarrito(); pintarCarrito(); if(refrescarGrid) refrescarGrid(); }
+
+/* Producto por peso: elegir la cantidad (o corregir la de una línea que ya está en el pedido). */
 function tocarProducto(p, rest){
   const peso = C.MEDIDAS[p.medida] && C.MEDIDAS[p.medida].peso;
   if(!peso){ añadir(p, 1000); return; }
+  abrirPeso(p, rest, null);
+}
+function abrirPeso(p, rest, linea){
   hoja(p.nombre, cerrar => {
-    const q = h('input', {inputmode:'decimal', placeholder:'0', 'aria-label':'Cantidad en ' + C.nombreMedida(p.medida, 2000)});
+    const q = h('input', {inputmode:'decimal', placeholder:'0', value:linea ? C.cantidad(linea.qty).replace('.', ',') : '', 'aria-label':'Cantidad en ' + C.nombreMedida(p.medida, 2000)});
     const info = h('p', {class:'ayuda'}); const imp = h('div', {class:'total'}, h('span', {}, 'Cobrar'), h('b', {class:'num'}, '0'));
     const act = () => { const m = C.aMilesimas(q.value); const ok = !isNaN(m) && m > 0;
-      imp.lastChild.textContent = ok ? C.dinero(C.importeLinea(p.precioCents, m)) : '0';
-      info.textContent = ok && p.controlStock && m > rest ? 'Ojo: solo quedan ' + textoCantidad(p, Math.max(rest, 0)) + '.' : C.dinero(p.precioCents) + ' la ' + C.nombreMedida(p.medida, 1000) + (p.controlStock ? ' · quedan ' + textoCantidad(p, Math.max(rest, 0)) : ''); };
-    q.addEventListener('input', act); act();
+      imp.lastChild.textContent = ok ? C.dinero(C.importeLinea(precioUnit(linea || {pid:p.id}), m)) : '0';
+      const hayStock = p.controlStock && isFinite(rest);
+      info.textContent = ok && hayStock && m > rest ? 'Ojo: solo quedan ' + textoCantidad(p, Math.max(rest, 0)) + '.' : C.dinero(p.precioCents) + ' la ' + C.nombreMedida(p.medida, 1000) + (hayStock ? ' · quedan ' + textoCantidad(p, Math.max(rest, 0)) : ''); };
+    q.addEventListener('input', act); act(); setTimeout(() => q.focus(), 80);
     const rap = h('div', {class:'rapidos'}, ['0,5', '1', '1,5', '2', '3', '5'].map(x => h('button', {onclick:() => { q.value = x; act(); }}, x)));
     return h('div', {}, info, campo('¿Cuánto? (' + C.nombreMedida(p.medida, 2000) + ')', q), rap, imp,
-      h('button', {class:'btn', onclick:() => { const m = C.aMilesimas(q.value); if(isNaN(m) || m <= 0){ aviso('Pon cuánto vendiste', true); q.focus(); return; } añadir(p, m); cerrar(); }}, 'Añadir al pedido'));
+      h('button', {class:'btn', onclick:() => { const m = C.aMilesimas(q.value); if(isNaN(m) || m <= 0){ aviso('Pon cuánto vendiste', true); q.focus(); return; }
+        if(linea) linea.qty = m; else cart.push({pid:p.id, qty:m, ag:{}}); cerrar(); cambioCarrito(); if(linea && document.querySelector('.hoja-fondo')) abrirCarrito(); }}, linea ? 'Cambiar la cantidad' : 'Añadir al pedido'),
+      h('button', {class:'btn suave', onclick:cerrar}, 'Cancelar'));
   });
 }
 function añadir(p, qty){
   const peso = C.MEDIDAS[p.medida] && C.MEDIDAS[p.medida].peso;
   const l = !peso && cart.find(x => x.pid === p.id);
   if(l) l.qty += qty; else cart.push({pid:p.id, qty, ag:{}});
-  pintarCarrito(); aviso(p.nombre + ' añadido');
+  cambioCarrito();
 }
+function resumenCarrito(){
+  const lineas = cart.length; const unidades = cart.reduce((s, l) => s + (C.MEDIDAS[(prod(l.pid) || {}).medida] && C.MEDIDAS[prod(l.pid).medida].peso ? 1 : l.qty / 1000), 0);
+  return {lineas, unidades:Math.round(unidades * 10) / 10};
+}
+/* Barra fija sobre la navegación: aparece solo cuando hay algo en el pedido. */
 function pintarCarrito(){
-  const c = document.getElementById('carrito');
-  if(!cart.length || pantalla !== 'vender' || !dia){ montar(c); return; }
-  const n = cart.length;
+  const c = document.getElementById('carrito'); const mostrar = cart.length && pantalla === 'vender' && dia;
+  raiz.classList.toggle('con-barra', !!mostrar);
+  if(!mostrar){ montar(c); return; }
+  const r = resumenCarrito();
   montar(c, h('div', {class:'barra-carrito'}, h('div', {class:'in'},
-    h('button', {style:'background:none;color:inherit;font-size:16px;text-align:left;min-height:50px', onclick:abrirCarrito}, h('span', {class:'num'}, n + (n === 1 ? ' producto' : ' productos')), h('br'), h('b', {class:'num'}, C.dinero(totalCarrito()))),
-    h('button', {onclick:abrirCobro}, 'Cobrar'))));
+    h('button', {class:'cb-pedido', onclick:abrirCarrito, 'aria-label':'Ver el pedido: ' + r.lineas + ' productos, ' + C.dinero(totalCarrito())}, icono('carrito', 24),
+      h('span', {class:'cb-txt'}, h('b', {class:'num'}, C.dinero(totalCarrito())), h('span', {}, r.lineas + (r.lineas === 1 ? ' producto' : ' productos') + ' · Ver pedido'))),
+    h('button', {class:'cb-cobrar', onclick:abrirCobro}, 'Cobrar'))));
 }
+/* Hoja «Tu pedido»: todas las líneas con su cantidad y subtotal; el total y el cobro siempre a la vista. */
 function abrirCarrito(){
-  hoja('Pedido', cerrar => {
-    const cuerpo = h('div');
-    const repinta = () => { draw(); pintarCarrito(); };
+  document.querySelectorAll('.hoja-fondo').forEach(e => e.remove());
+  hoja('Tu pedido', cerrar => {
+    const lista = h('div'), pie = h('div', {class:'hoja-pie'}), sub = h('p', {class:'ayuda', style:'margin:0 0 8px'});
+    const repinta = () => { cambioCarrito(); draw(); };
+    const quitar = i => { const l = cart.splice(i, 1)[0]; const p = prod(l.pid); cambioCarrito(); draw();
+      avisoAccion('Quitaste ' + (p ? p.nombre : 'un producto'), 'Deshacer', () => { cart.splice(Math.min(i, cart.length), 0, l); cambioCarrito(); if(document.querySelector('.hoja-fondo')) draw(); else abrirCarrito(); }); };
     const draw = () => {
       if(!cart.length){ cerrar(); pintarCarrito(); return; }
+      const r = resumenCarrito(); sub.textContent = r.lineas + (r.lineas === 1 ? ' línea' : ' líneas') + ' · ' + C.dinero(totalCarrito());
       const especial = !cartAuth
         ? h('button', {class:'btn suave', onclick:async () => { if(await pedirClave('Solo el dueño puede dar un precio especial.')){ cartAuth = true; draw(); } }}, 'Precio especial (clave del dueño)')
         : h('div', {class:'card'}, h('b', {}, 'Precio especial autorizado'),
             (dia.listas || []).length ? h('div', {class:'opts'}, h('button', {class:'op', 'aria-pressed':!cartLista, onclick:() => { cartLista = null; cart.forEach(l => delete l.precio); repinta(); }}, 'Precio normal'),
               (dia.listas || []).map(x => h('button', {class:'op', 'aria-pressed':!!cartLista && cartLista.id === x.id, onclick:() => { cartLista = x; cart.forEach(l => delete l.precio); repinta(); }}, x.nombre + ' −' + x.pct + ' %'))) : null,
-            h('p', {class:'ayuda'}, 'También puedes cambiar el precio de cada producto aquí abajo.'));
-      cuerpo.replaceChildren(...cart.map((l, i) => {
-        const p = prod(l.pid); const peso = C.MEDIDAS[p.medida].peso;
-        const ags = p.admiteAgregos ? dia.agregos.map(a => h('div', {class:'lin'}, h('span', {}, a.nombre + ' ', h('span', {class:'d num'}, '+' + C.dinero(a.precioCents))),
-          h('div', {class:'paso'}, h('button', {'aria-label':'Quitar ' + a.nombre, onclick:() => { const c = (l.ag[a.id] || 0) - 1; if(c > 0) l.ag[a.id] = c; else delete l.ag[a.id]; repinta(); }}, '−'),
-            h('output', {}, l.ag[a.id] || 0), h('button', {class:'mas', 'aria-label':'Añadir ' + a.nombre, onclick:() => { l.ag[a.id] = (l.ag[a.id] || 0) + 1; repinta(); }}, '+')))) : [];
-        return h('div', {class:'card'}, h('div', {class:'fila'}, h('div', {}, h('b', {}, p.nombre), h('div', {class:'d ayuda num'}, textoCantidad(p, l.qty) + ' × ' + C.dinero(precioUnit(l)) + (precioUnit(l) !== p.precioCents ? ' (precio especial)' : ''))),
-          h('b', {class:'num'}, C.dinero(totalLinea(l)))),
-          cartAuth ? campo('Precio de ' + C.nombreMedida(p.medida, 1000), h('input', {inputmode:'decimal', value:String(precioUnit(l) / 100), onchange:e => { const c = C.aCentavos(e.target.value); if(!isNaN(c) && c >= 0){ l.precio = c; repinta(); } else aviso('Revisa el precio', true); }})) : null,
-          peso ? null : h('div', {class:'paso', style:'margin-top:8px'}, h('button', {'aria-label':'Quitar uno', onclick:() => { if(l.qty > 1000) l.qty -= 1000; else cart.splice(i, 1); repinta(); }}, '−'), h('output', {}, C.cantidad(l.qty)), h('button', {class:'mas', 'aria-label':'Añadir uno', onclick:() => { l.qty += 1000; repinta(); }}, '+')),
-          ags, h('button', {class:'enlace', onclick:() => { cart.splice(i, 1); repinta(); }}, 'Quitar del pedido'));
-      }), especial, h('div', {class:'total'}, h('span', {}, 'Total'), h('b', {class:'num'}, C.dinero(totalCarrito()))),
-        h('button', {class:'btn', onclick:() => { cerrar(); abrirCobro(); }}, 'Cobrar'));
+            h('p', {class:'ayuda'}, 'También puedes cambiar el precio de cada producto abajo.'));
+      lista.replaceChildren(...cart.map((l, i) => {
+        const p = prod(l.pid); const peso = C.MEDIDAS[p.medida].peso; const esp = precioUnit(l) !== p.precioCents;
+        const ags = p.admiteAgregos && (dia.agregos || []).length ? h('div', {class:'lc-ag'}, dia.agregos.map(a => h('div', {class:'lc-agr'},
+          h('span', {}, a.nombre + ' ', h('span', {class:'ayuda num'}, '+' + C.dinero(a.precioCents))),
+          h('div', {class:'paso chico'}, h('button', {'aria-label':'Quitar ' + a.nombre, onclick:() => { const c = (l.ag[a.id] || 0) - 1; if(c > 0) l.ag[a.id] = c; else delete l.ag[a.id]; repinta(); }}, icono('menos', 18)),
+            h('output', {}, l.ag[a.id] || 0), h('button', {class:'mas', 'aria-label':'Añadir ' + a.nombre, onclick:() => { l.ag[a.id] = (l.ag[a.id] || 0) + 1; repinta(); }}, icono('mas', 18)))))) : null;
+        return h('div', {class:'lc'}, h('div', {class:'lc-top'}, h('div', {class:'lc-n'}, h('b', {}, p.nombre), h('div', {class:'ayuda num'}, textoCantidad(p, l.qty) + ' × ' + C.dinero(precioUnit(l)) + (esp ? ' · precio especial' : ''))), h('b', {class:'num lc-sub'}, C.dinero(totalLinea(l)))),
+          h('div', {class:'lc-ctl'},
+            peso ? h('button', {class:'btn chico suave', onclick:() => abrirPeso(p, Infinity, l)}, 'Cambiar cantidad')
+              : h('div', {class:'paso'}, h('button', {'aria-label':'Quitar uno de ' + p.nombre, onclick:() => { if(l.qty > 1000){ l.qty -= 1000; repinta(); } else quitar(i); }}, icono('menos', 22)), h('output', {'aria-live':'polite'}, C.cantidad(l.qty)), h('button', {class:'mas', 'aria-label':'Añadir uno de ' + p.nombre, onclick:() => { l.qty += 1000; repinta(); }}, icono('mas', 22))),
+            h('button', {class:'icon-btn', 'aria-label':'Quitar ' + p.nombre + ' del pedido', onclick:() => quitar(i)}, icono('papelera', 22))),
+          cartAuth ? campo('Precio de ' + C.nombreMedida(p.medida, 1000), h('input', {inputmode:'decimal', value:String(precioUnit(l) / 100), onchange:e => { const c = C.aCentavos(e.target.value); if(!isNaN(c) && c >= 0){ l.precio = c; repinta(); } else aviso('Revisa el precio', true); }})) : null, ags);
+      }), especial);
+      pie.replaceChildren(h('div', {class:'total'}, h('span', {}, 'Total'), h('b', {class:'num'}, C.dinero(totalCarrito()))),
+        h('div', {class:'dos'}, h('button', {class:'btn suave', onclick:cerrar}, 'Seguir añadiendo'), h('button', {class:'btn', onclick:() => { cerrar(); abrirCobro(); }}, 'Cobrar')));
     };
-    draw(); return cuerpo;
+    draw(); return h('div', {}, sub, lista, pie);
   });
 }
 
-/* ---------- cobrar ---------- */
+
+/* ---------- cobrar ----------
+   De arriba abajo: total, cómo paga (ya viene «Efectivo» por el total exacto), lo que el cliente da, domicilio, y al fondo —siempre a la vista— Falta/Vuelto y «Anotar venta».
+   Una venta sencilla en efectivo: producto, producto, Cobrar, Anotar venta. Nada se registra hasta tocar «Anotar venta». */
 function abrirCobro(){
   const base = totalCarrito(); if(!base) return;
-  const monedas = Object.keys(dia.tasas || {}).filter(m => m !== 'CUP');
-  let pagos = [{metodo:'efectivo', moneda:'CUP', monto:''}];
+  document.querySelectorAll('.hoja-fondo').forEach(e => e.remove());
+  const monedas = Object.keys(dia.tasas || {}).filter(m => m !== 'CUP' && dia.tasas[m]);
   const dom = {on:false, direccion:'', envio:'', mensajero:''};
   const envioCents = () => { if(!dom.on) return 0; const e = C.aCentavos(dom.envio); return isNaN(e) || e < 0 ? 0 : e; };
   const total = () => base + envioCents();
+  const modos = [['efectivo', 'Efectivo', 'efectivo'], ['transferencia', 'Transferencia', 'tarjeta'], ['qr', 'QR', 'qr'], ...monedas.map(m => ['usd:' + m, m === 'USD' ? 'Dólares' : m, 'dolar']), ...(dia.clave ? [['fiado', 'Fiado', 'libreta']] : []), ['mixto', 'Varios pagos', 'mas']];
+  const st = {modo:'efectivo', pagos:[]};
+  const etiqueta = p => p.metodo === 'efectivo' ? 'Efectivo ' + p.moneda : p.metodo === 'transferencia' ? 'Transferencia' : p.metodo === 'qr' ? 'QR (Transfermóvil / EnZona)' : 'Fiado';
+  /* Cada forma de pago propone el importe exacto; si la vendedora ya escribió otro, se respeta. */
+  const fijar = modo => {
+    const t = total(), previo = st.pagos[0], conservar = previo && previo._editado && st.modo === modo && modo !== 'mixto';
+    st.modo = modo; if(conservar) return;
+    if(modo === 'efectivo') st.pagos = [{metodo:'efectivo', moneda:'CUP', monto:String(t / 100)}];
+    else if(modo === 'transferencia' || modo === 'qr') st.pagos = [{metodo:modo, moneda:'CUP', monto:String(t / 100)}];
+    else if(modo.startsWith('usd:')){ const m = modo.slice(4); st.pagos = [{metodo:'efectivo', moneda:m, monto:String(Math.ceil(t / tasaDe(m)))}]; }
+    else if(modo === 'fiado') st.pagos = [{metodo:'fiado', moneda:'CUP', monto:String(t / 100), cliente:'', pin:''}];
+    else if(!st.pagos.length || st.pagos.length === 1) st.pagos = [{metodo:'efectivo', moneda:'CUP', monto:''}];
+  };
+  fijar('efectivo');
   hoja('Cobrar', cerrar => {
-    const cuerpo = h('div'); const resumen = h('div', {class:'total'});
+    const cuerpo = h('div'), pie = h('div', {class:'hoja-pie'}), resumen = h('div', {class:'total'}), btnAnotar = h('button', {class:'btn', onclick:() => guardar(st.pagos)}, 'Anotar venta');
     const calc = () => {
       let efectivo = 0, otros = 0;
-      for(const p of pagos){ const m = C.aCentavos(p.monto); p._m = isNaN(m) ? 0 : m; p._cup = C.aCup(p._m, tasaDe(p.moneda)); if(p.metodo === 'efectivo') efectivo += p._cup; else otros += p._cup; }
-      const t = total();
-      return {efectivo, otros, suma:efectivo + otros, falta:Math.max(0, t - efectivo - otros), vuelto:Math.max(0, efectivo + otros - t)};
+      for(const p of st.pagos){ const m = C.aCentavos(p.monto); p._m = isNaN(m) ? 0 : m; p._cup = C.aCup(p._m, tasaDe(p.moneda)); if(p.metodo === 'efectivo') efectivo += p._cup; else otros += p._cup; }
+      const t = total(); return {efectivo, otros, suma:efectivo + otros, falta:Math.max(0, t - efectivo - otros), vuelto:Math.max(0, efectivo + otros - t)};
     };
     const pintaResumen = () => { const c = calc();
-      resumen.replaceChildren(h('span', {}, c.falta ? 'Falta' : 'Vuelto'), h('b', {class:'num'}, c.falta ? C.dinero(c.falta) : C.dinero(c.vuelto))); };
-    const etiqueta = p => p.metodo === 'efectivo' ? 'Efectivo ' + p.moneda : p.metodo === 'transferencia' ? 'Transferencia' : p.metodo === 'qr' ? 'QR (Transfermóvil / EnZona)' : 'Fiado';
+      resumen.className = 'total' + (c.falta ? ' falta' : '');
+      resumen.replaceChildren(h('span', {}, c.falta ? 'Falta por pagar' : c.vuelto ? 'Dale de vuelto' : 'Pago completo'), h('b', {class:'num'}, c.falta ? C.dinero(c.falta) : C.dinero(c.vuelto))); };
+    const montoInput = (p, ph) => h('input', {inputmode:'decimal', placeholder:ph || '0', value:p.monto, 'aria-label':'Monto en ' + p.moneda, oninput:e => { p.monto = e.target.value; p._editado = true; pintaResumen(); }});
+    const panel = () => {
+      const t = total(), p = st.pagos[0];
+      if(st.modo === 'efectivo'){
+        const redondos = [100, 500, 1000, 2000, 5000].map(x => Math.ceil(t / (x * 100)) * x * 100).filter((x, i, a) => a.indexOf(x) === i && x > t);
+        return h('div', {class:'card'}, campo('El cliente da (pesos)', montoInput(p)),
+          h('div', {class:'rapidos'}, h('button', {onclick:() => { p.monto = String(t / 100); p._editado = false; draw(); }}, 'Exacto'), redondos.map(x => h('button', {onclick:() => { p.monto = String(x / 100); p._editado = true; draw(); }}, C.dinero(x)))));
+      }
+      if(st.modo === 'transferencia' || st.modo === 'qr') return h('div', {class:'card'}, campo('Monto recibido por ' + (st.modo === 'qr' ? 'QR' : 'transferencia') + ' (pesos)', montoInput(p)), h('p', {class:'ayuda'}, 'Después manda la captura al dueño desde «Ventas».'));
+      if(st.modo.startsWith('usd:')){ const m = st.modo.slice(4); return h('div', {class:'card'}, campo('El cliente da (' + m + ')', montoInput(p)), h('p', {class:'ayuda num'}, '1 ' + m + ' = ' + C.dinero(tasaDe(m)) + ' CUP · equivale a ' + C.dinero(C.aCup(C.aCentavos(p.monto) || 0, tasaDe(m))) + ' CUP. El vuelto se da en pesos.')); }
+      if(st.modo === 'fiado') return h('div', {class:'card'}, campo('Nombre del cliente', h('input', {value:p.cliente || '', placeholder:'¿A quién se le fía?', oninput:e => { p.cliente = e.target.value; }})),
+        campo('Clave del dueño', h('input', {type:'password', inputmode:'numeric', placeholder:'Solo el dueño la sabe', oninput:e => { p.pin = e.target.value; }}), 'Un fiado necesita que el dueño lo autorice con su clave.'));
+      return h('div', {}, ...st.pagos.map((q, i) => h('div', {class:'card'}, h('div', {class:'fila'}, h('b', {}, etiqueta(q)), st.pagos.length > 1 ? h('button', {class:'icon-btn', 'aria-label':'Quitar este pago', onclick:() => { st.pagos.splice(i, 1); draw(); }}, icono('cerrar', 22)) : null),
+          h('div', {class:'fila', style:'margin-top:8px'}, montoInput(q), h('button', {class:'btn chico suave', onclick:() => { const c = calc(); const falta = Math.max(0, total() - (c.suma - q._cup)); q.monto = String(Math.ceil(falta * 100 / tasaDe(q.moneda)) / 100); q._editado = true; draw(); }}, 'Lo que falta')),
+          q.metodo === 'fiado' ? [campo('Nombre del cliente', h('input', {value:q.cliente || '', placeholder:'¿A quién se le fía?', oninput:e => { q.cliente = e.target.value; }})), campo('Clave del dueño', h('input', {type:'password', inputmode:'numeric', placeholder:'Solo el dueño la sabe', oninput:e => { q.pin = e.target.value; }}))] : null)),
+        h('div', {class:'opts'}, h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'efectivo', moneda:'CUP', monto:''}); draw(); }}, '+ Efectivo'), h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'transferencia', moneda:'CUP', monto:''}); draw(); }}, '+ Transferencia'),
+          h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'qr', moneda:'CUP', monto:''}); draw(); }}, '+ QR'), monedas.map(m => h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'efectivo', moneda:m, monto:''}); draw(); }}, '+ ' + m)),
+          dia.clave ? h('button', {class:'op', onclick:() => { st.pagos.push({metodo:'fiado', moneda:'CUP', monto:'', cliente:'', pin:''}); draw(); }}, '+ Fiado') : null));
+    };
     const draw = () => {
-      const t = total();
-      const redondos = [100, 500, 1000, 2000, 5000].map(x => Math.ceil(t / (x * 100)) * x * 100).filter((x, i, a) => a.indexOf(x) === i && x >= t);
       cuerpo.replaceChildren(
-        h('div', {class:'total'}, h('span', {}, 'Total'), h('b', {class:'num'}, C.dinero(t))),
-        h('button', {class:'btn', onclick:() => guardar([{metodo:'efectivo', moneda:'CUP', monto:String(t / 100)}])}, 'Cobrar exacto en efectivo (' + C.dinero(t) + ')'),
-        h('label', {class:'lin', style:'cursor:pointer;margin-top:8px'}, h('span', {}, 'Es un pedido a domicilio'), h('input', {type:'checkbox', style:'width:26px;min-height:26px', checked:dom.on, onchange:e => { dom.on = e.target.checked; draw(); }})),
+        h('div', {class:'total grande'}, h('span', {}, 'Total a cobrar'), h('b', {class:'num'}, C.dinero(total()))),
+        h('p', {class:'marca', style:'margin:12px 0 6px'}, 'Cómo paga'),
+        h('div', {class:'opts', role:'group', 'aria-label':'Cómo paga'}, modos.map(([id, nombre, ico]) => h('button', {class:'op con-ico', 'aria-pressed':st.modo === id, onclick:() => { fijar(id); draw(); }}, icono(ico, 20), nombre))),
+        panel(),
+        h('label', {class:'lin', style:'cursor:pointer;margin-top:6px'}, h('span', {}, 'Es un pedido a domicilio'), h('input', {type:'checkbox', style:'width:26px;min-height:26px', checked:dom.on, onchange:e => { dom.on = e.target.checked; fijar(st.modo); draw(); }})),
         dom.on ? h('div', {class:'card'}, campo('Dirección', h('input', {value:dom.direccion, oninput:e => dom.direccion = e.target.value, placeholder:'¿A dónde va?'})),
-          campo('Cobro del envío (pesos)', h('input', {inputmode:'decimal', value:dom.envio, placeholder:'0', onchange:e => { dom.envio = e.target.value; draw(); }})),
-          (dia.mensajeros || []).length ? campo('Mensajero', h('select', {onchange:e => dom.mensajero = e.target.value}, h('option', {value:''}, 'Elige…'), dia.mensajeros.map(m => h('option', {value:m, selected:m === dom.mensajero}, m)))) : null) : null,
-        h('p', {class:'ayuda', style:'margin-top:14px'}, 'O elige cómo pagó el cliente:'),
-        ...pagos.map((p, i) => {
-          const inp = h('input', {inputmode:'decimal', placeholder:'0', value:p.monto, 'aria-label':'Monto en ' + p.moneda, oninput:e => { p.monto = e.target.value; pintaResumen(); }});
-          const ex = h('button', {class:'btn chico suave', onclick:() => { const c = calc(); const falta = Math.max(0, total() - (c.suma - p._cup)); p.monto = String(Math.ceil(falta * 100 / tasaDe(p.moneda)) / 100); draw(); }}, 'Lo que falta');
-          return h('div', {class:'card'}, h('div', {class:'fila'}, h('b', {}, etiqueta(p)), pagos.length > 1 ? h('button', {class:'x', 'aria-label':'Quitar este pago', onclick:() => { pagos.splice(i, 1); draw(); }}, '✕') : null),
-            h('div', {class:'fila', style:'margin-top:8px'}, inp, ex),
-            p.metodo === 'efectivo' && p.moneda === 'CUP' && i === 0 ? h('div', {class:'rapidos'}, redondos.map(x => h('button', {onclick:() => { p.monto = String(x / 100); draw(); }}, C.dinero(x)))) : null,
-            p.metodo === 'fiado' ? [campo('Nombre del cliente', h('input', {value:p.cliente || '', placeholder:'¿A quién se le fía?', oninput:e => { p.cliente = e.target.value; }})),
-              campo('Clave del dueño', h('input', {type:'password', inputmode:'numeric', placeholder:'Solo el dueño la sabe', oninput:e => { p.pin = e.target.value; }}))] : null);
-        }),
-        h('div', {class:'opts'},
-          h('button', {class:'op', onclick:() => { pagos.push({metodo:'efectivo', moneda:'CUP', monto:''}); draw(); }}, '+ Efectivo'),
-          h('button', {class:'op', onclick:() => { pagos.push({metodo:'transferencia', moneda:'CUP', monto:''}); draw(); }}, '+ Transferencia'),
-          h('button', {class:'op', onclick:() => { pagos.push({metodo:'qr', moneda:'CUP', monto:''}); draw(); }}, '+ QR'),
-          monedas.map(m => h('button', {class:'op', onclick:() => { pagos.push({metodo:'efectivo', moneda:m, monto:''}); draw(); }}, '+ ' + m)),
-          dia.clave ? h('button', {class:'op', onclick:() => { pagos.push({metodo:'fiado', moneda:'CUP', monto:'', cliente:'', pin:''}); draw(); }}, '+ Fiado') : null),
-        resumen, h('button', {class:'btn', onclick:() => guardar(pagos)}, 'Anotar venta'));
+          campo('Cobro del envío (pesos)', h('input', {inputmode:'decimal', value:dom.envio, placeholder:'0', onchange:e => { dom.envio = e.target.value; fijar(st.modo); draw(); }})),
+          (dia.mensajeros || []).length ? campo('Mensajero', h('select', {onchange:e => dom.mensajero = e.target.value}, h('option', {value:''}, 'Elige…'), dia.mensajeros.map(m => h('option', {value:m, selected:m === dom.mensajero}, m)))) : null) : null);
       pintaResumen();
     };
     async function guardar(lista){
-      if(ocupado) return; ocupado = true;
+      if(ocupado) return; ocupado = true; btnAnotar.disabled = true;
       try {
         const tot = total();
         if(dom.on && !dom.direccion.trim()){ aviso('Escribe la dirección del pedido.', true); return; }
         let efectivo = 0, otros = 0; const pg = [];
         for(const p of lista){
-          const m = C.aCentavos(p.monto); if(isNaN(m) || m <= 0) { if(lista.length > 1 && (p.monto === '' || p.monto === undefined)) continue; aviso('Revisa el monto de ' + etiqueta(p), true); return; }
+          const m = C.aCentavos(p.monto); if(isNaN(m) || m <= 0){ if(lista.length > 1 && (p.monto === '' || p.monto === undefined)) continue; aviso('Revisa el monto de ' + etiqueta(p), true); return; }
           const tasa = tasaDe(p.moneda); if(!tasa){ aviso('No hay cambio para ' + p.moneda + '. Pídele al dueño que lo ponga.', true); return; }
           const cup = C.aCup(m, tasa);
           if(p.metodo === 'fiado'){
@@ -370,45 +469,75 @@ function abrirCobro(){
         await C.sellarVenta(venta, dia.ultimoHash);
         await db.put('ventas', venta); dia.ultimoHash = venta.hash; dia.contador = venta.num; await guardarDia();
         limpiarCarrito(); cerrar(); pintarCarrito(); pintar();
-        hoja('Venta ' + ticket(venta.num), c2 => h('div', {}, h('div', {class:'total'}, h('span', {}, 'Total'), h('b', {class:'num'}, C.dinero(tot))),
-          vuelto ? h('div', {class:'card', style:'margin-top:10px'}, h('div', {class:'fila'}, h('b', {}, 'Dale de vuelto'), h('b', {class:'num bien', style:'font-size:30px'}, C.dinero(vuelto)))) : null,
+        hoja('Venta ' + ticket(venta.num) + ' registrada ✓', c2 => h('div', {}, h('div', {class:'total'}, h('span', {}, 'Total cobrado'), h('b', {class:'num'}, C.dinero(tot))),
+          vuelto ? h('div', {class:'card', style:'margin-top:10px'}, h('div', {class:'fila'}, h('b', {}, 'Dale de vuelto'), h('b', {class:'num bien', style:'font-size:32px'}, C.dinero(vuelto)))) : null,
           h('button', {class:'btn', onclick:c2}, 'Siguiente venta')));
-      } finally { ocupado = false; }
+      } finally { ocupado = false; btnAnotar.disabled = false; }
     }
-    draw(); return cuerpo;
+    pie.append(resumen, btnAnotar);
+    draw(); return h('div', {}, cuerpo, pie);
   });
 }
 
+
 /* ---------- ventas del día ----------
-   Arriba el total y lo que importa; filtros por cómo pagaron; filas compactas (una venta = una línea) y el detalle en una hoja al tocar. */
-let filtroV = 'todas';
+   Herramienta de trabajo, no de estadística: franja de total compacta, búsqueda, filtros y la lista lo más arriba posible, agrupada por hora.
+   El detalle sale en una hoja; la búsqueda, el filtro y la posición se conservan al volver. */
+let filtroV = 'todas', busquedaV = '';
 const NOMBRE_PAGO = {efectivo:'Efectivo', transferencia:'Transferencia', qr:'QR', fiado:'Fiado'};
+const ICONO_PAGO = {efectivo:'efectivo', transferencia:'tarjeta', qr:'qr', fiado:'libreta'};
 async function vVentas(){
   if(!dia) return sinEntrega();
+  const y = pendienteScroll != null ? pendienteScroll : window.scrollY; pendienteScroll = null;
   const ventas = await ventasDia(), sol = await solicitudesDia(); const q = C.calcularCuadre(ventas, sol, dia.fondoCents);
   const tiene = (v, ...ms) => v.pagos.some(p => ms.includes(p.metodo));
+  const sinCap = v => v.pagos.some(p => (p.metodo === 'transferencia' || p.metodo === 'qr')) && !dia.capturas[v.id];
+  const conPedido = v => sol.some(s => s.ventaId === v.id);
   const metodoCorto = v => { const ms = [...new Set(v.pagos.map(p => p.metodo))]; return ms.length > 1 ? 'Mixto' : ms[0] === 'transferencia' ? 'Transf.' : NOMBRE_PAGO[ms[0]]; };
-  const filtros = [['todas', 'Todas', () => true], ['efectivo', 'Efectivo', v => tiene(v, 'efectivo')], ['transf', 'Transf. y QR', v => tiene(v, 'transferencia', 'qr')], ['fiado', 'Fiado', v => tiene(v, 'fiado')], ['pedidos', 'Con pedido', v => sol.some(s => s.ventaId === v.id)]]
+  const iconoMetodo = v => { const ms = [...new Set(v.pagos.map(p => p.metodo))]; return icono(ms.length > 1 ? 'mas' : ICONO_PAGO[ms[0]] || 'efectivo', 16); };
+  const filtros = [['todas', 'Todas', () => true], ['efectivo', 'Efectivo', v => tiene(v, 'efectivo')], ['transf', 'Transf. y QR', v => tiene(v, 'transferencia', 'qr')], ['fiado', 'Fiado', v => tiene(v, 'fiado')], ['pedidos', 'Con pedido', conPedido]]
     .filter(f => f[0] === 'todas' || ventas.some(f[2]));
   if(!filtros.some(f => f[0] === filtroV)) filtroV = 'todas';
-  const activo = filtros.find(f => f[0] === filtroV)[2];
-  const lista = ventas.filter(activo).slice().reverse();
-  const sinCaptura = q.transferencias.filter(t => !dia.capturas[t.ventaId]).length;
-  const mini = (t, v) => v ? h('div', {class:'mini'}, h('span', {}, t), h('b', {class:'num'}, C.dinero(v))) : null;
+  const sinCaptura = ventas.filter(sinCap).length;
   const resumenProductos = v => { const n = v.lineas.map(l => l.nombre + (l.qtyMilli === 1000 ? '' : ' ×' + C.cantidad(l.qtyMilli))); return n.length > 2 ? n.slice(0, 2).join(', ') + ' +' + (n.length - 2) : n.join(', '); };
-  const fila = v => {
-    const pedido = sol.some(s => s.ventaId === v.id), especial = v.lineas.some(l => l.lista);
-    return h('button', {class:'vrow', onclick:() => detalleVenta(v, sol)},
-      h('div', {class:'vt'}, h('b', {}, ticket(v.num)), h('span', {class:'ayuda'}, C.horaDe(v.ts))),
-      h('div', {class:'vd'}, h('span', {}, resumenProductos(v)), (v.domicilio || especial || pedido) ? h('span', {class:'vtags'}, v.domicilio ? h('span', {class:'etq'}, 'Domicilio') : null, especial ? h('span', {class:'etq'}, 'Precio especial') : null, pedido ? h('span', {class:'etq warn'}, 'Pedido') : null) : null),
-      h('div', {class:'vm'}, h('b', {class:'num'}, C.dinero(v.totalCents)), h('span', {class:'ayuda'}, metodoCorto(v))));
+  /* Búsqueda local por ticket (T-005, 5), importe (1050 ó 1 050) o nombre de producto. */
+  const coincide = v => {
+    const t = sinAcentos(busquedaV); if(!t) return true;
+    const soloNum = t.replace(/^t-?/, '').replace(/\s/g, ''); const imp = C.num(t.replace(/\s/g, ''));
+    if(/^\d+$/.test(soloNum) && (String(v.num) === String(+soloNum) || ticket(v.num).toLowerCase().includes(t))) return true;
+    if(!isNaN(imp) && (Math.abs(v.totalCents / 100 - imp) < 0.005 || String(v.totalCents / 100).startsWith(String(imp)))) return true;
+    return v.lineas.some(l => sinAcentos(l.nombre).includes(t));
   };
-  montar(raiz, banner(), h('p', {class:'marca'}, dia.puesto.nombre + ' · ' + C.fechaBonita(dia.fecha)), h('h1', {}, 'Ventas de hoy'),
-    h('div', {class:'total'}, h('div', {}, h('span', {}, 'Llevas'), h('div', {class:'ayuda', style:'color:inherit;opacity:.8'}, ventas.length + (ventas.length === 1 ? ' venta' : ' ventas') + (ventas.length ? ' · promedio ' + C.dinero(Math.round(q.ventasCup / ventas.length)) : ''))), h('b', {class:'num'}, C.dinero(q.netoCup))),
-    h('div', {class:'minis'}, mini('Efectivo', q.porMetodo.efectivo || 0), mini('Transf. y QR', (q.porMetodo.transferencia || 0) + (q.porMetodo.qr || 0)), mini('Fiado', q.porMetodo.fiado || 0), mini('Devuelto', q.devueltoCup)),
-    sinCaptura ? h('button', {class:'card aviso-c', style:'display:block;width:100%;text-align:left;padding:10px 14px', onclick:() => { filtroV = 'transf'; pintar(); }}, h('b', {}, sinCaptura + (sinCaptura === 1 ? ' transferencia sin captura' : ' transferencias sin captura') + ' · toca para verlas')) : null,
-    filtros.length > 1 ? h('div', {class:'chips'}, filtros.map(f => h('button', {class:'op', 'aria-pressed':filtroV === f[0], onclick:() => { filtroV = f[0]; pintar(); }}, f[1]))) : null,
-    lista.length ? h('div', {class:'vlista'}, lista.map(fila)) : h('div', {class:'card'}, ventas.length ? 'No hay ventas con ese filtro.' : 'Todavía no has anotado ventas.'));
+  const fila = v => {
+    const atencion = sinCap(v) || conPedido(v);
+    return h('button', {class:'vrow' + (atencion ? ' atencion' : ''), onclick:() => detalleVenta(v, sol)},
+      h('div', {class:'vt'}, h('b', {}, ticket(v.num)), h('span', {class:'ayuda'}, C.horaDe(v.ts))),
+      h('div', {class:'vd'}, h('span', {}, resumenProductos(v)), h('span', {class:'vtags'},
+        sinCap(v) ? h('span', {class:'etq warn'}, 'Falta captura') : null, conPedido(v) ? h('span', {class:'etq warn'}, 'Pedido de devolución') : null,
+        tiene(v, 'fiado') ? h('span', {class:'etq n'}, 'Fiado') : null, v.domicilio ? h('span', {class:'etq n'}, 'Domicilio') : null, v.lineas.some(l => l.lista) ? h('span', {class:'etq n'}, 'Precio especial') : null)),
+      h('div', {class:'vm'}, h('b', {class:'num'}, C.dinero(v.totalCents)), h('span', {class:'ayuda mp'}, iconoMetodo(v), ' ', metodoCorto(v))));
+  };
+  const lista = h('div'), conteo = h('p', {class:'ayuda', style:'margin:0 0 6px'});
+  const pintaLista = () => {
+    const activo = filtros.find(f => f[0] === filtroV)[2];
+    const res = ventas.filter(activo).filter(coincide).slice().reverse();
+    conteo.textContent = busquedaV || filtroV !== 'todas' ? res.length + (res.length === 1 ? ' venta' : ' ventas') + ' encontradas' : '';
+    if(!res.length){ lista.replaceChildren(h('div', {class:'card'}, ventas.length ? 'No hay ventas con eso. Prueba con otro filtro o borra la búsqueda.' : 'Todavía no has anotado ventas.')); return; }
+    const grupos = []; for(const v of res){ const hr = C.horaDe(v.ts).slice(0, 2); const g = grupos[grupos.length - 1]; if(g && g.hr === hr) g.items.push(v); else grupos.push({hr, items:[v]}); }
+    lista.replaceChildren(...grupos.map(g => h('div', {}, h('div', {class:'gh'}, h('span', {}, g.hr + ':00'), h('span', {}, g.items.length + (g.items.length === 1 ? ' venta' : ' ventas') + ' · ' + C.dinero(g.items.reduce((s, v) => s + v.totalCents, 0)))), h('div', {class:'vlista'}, g.items.map(fila)))));
+  };
+  const chips = h('div', {class:'chips', role:'group', 'aria-label':'Filtros'});
+  const pintaChips = () => chips.replaceChildren(...filtros.map(f => h('button', {class:'op', 'aria-pressed':filtroV === f[0], onclick:() => { filtroV = f[0]; pintaChips(); pintaLista(); }}, f[1])));
+  const buscador = h('input', {type:'search', placeholder:'Buscar ticket, importe o producto', value:busquedaV, 'aria-label':'Buscar una venta', autocomplete:'off', oninput:e => { busquedaV = e.target.value; limpiar.hidden = !busquedaV; pintaLista(); }});
+  const limpiar = h('button', {class:'x', 'aria-label':'Borrar la búsqueda', hidden:!busquedaV, onclick:() => { busquedaV = ''; buscador.value = ''; limpiar.hidden = true; pintaLista(); buscador.focus(); }}, icono('cerrar', 20));
+  pintaChips(); pintaLista();
+  const partes = [['Efectivo', q.porMetodo.efectivo || 0], ['Transf. y QR', (q.porMetodo.transferencia || 0) + (q.porMetodo.qr || 0)], ['Fiado', q.porMetodo.fiado || 0], ['Devuelto', q.devueltoCup]].filter(x => x[1]);
+  montar(raiz, banner(), h('div', {class:'cab'}, h('div', {}, h('b', {}, 'Ventas de hoy'), h('span', {class:'ayuda'}, ' · ' + dia.puesto.nombre + ' · ' + C.fechaBonita(dia.fecha)))),
+    h('div', {class:'resumen'}, h('div', {}, h('span', {class:'r-et'}, 'Llevas'), h('div', {class:'r-sub num'}, ventas.length + (ventas.length === 1 ? ' venta' : ' ventas') + (ventas.length ? ' · promedio ' + C.dinero(Math.round(q.ventasCup / ventas.length)) : ''))), h('b', {class:'num r-tot'}, C.dinero(q.netoCup))),
+    partes.length ? h('p', {class:'ayuda num', style:'margin:6px 2px 8px'}, partes.map(x => x[0] + ' ' + C.dinero(x[1])).join(' · ')) : null,
+    sinCaptura ? h('button', {class:'aviso-pill', onclick:() => { filtroV = 'transf'; pintaChips(); pintaLista(); }}, icono('alerta', 18), ' ' + sinCaptura + (sinCaptura === 1 ? ' transferencia sin captura' : ' transferencias sin captura') + ' · ver') : null,
+    h('div', {class:'buscar'}, icono('buscar', 20), buscador, limpiar), filtros.length > 1 ? chips : null, conteo, lista);
+  window.scrollTo(0, y);
 }
 function detalleVenta(v, sol){
   hoja(ticket(v.num) + ' · ' + C.horaDe(v.ts), cerrar => {
@@ -421,9 +550,26 @@ function detalleVenta(v, sol){
       v.domicilio ? h('div', {class:'card'}, h('h3', {}, 'Domicilio'), h('p', {}, v.domicilio.direccion), v.domicilio.mensajero ? h('p', {class:'ayuda'}, 'Mensajero: ' + v.domicilio.mensajero) : null) : null,
       pedidos.map(s => h('div', {class:'card aviso-c'}, h('b', {}, (s.tipo === 'devolucion' ? 'Devolución' : 'Anulación') + ' pedida'), h('div', {}, s.motivo + ' · devolviste ' + C.dinero(s.efectivoDevueltoCents)))),
       trans ? h('label', {class:'lin', style:'cursor:pointer'}, h('span', {}, 'Ya mandé la captura al dueño'), h('input', {type:'checkbox', style:'width:26px;min-height:26px', checked:!!dia.capturas[v.id], onchange:async e => { dia.capturas[v.id] = e.target.checked; await guardarDia(); pintar(); }})) : null,
+      h('button', {class:'btn', onclick:() => { cerrar(); repetirVenta(v); }}, h('span', {class:'con-ico-b'}, icono('repetir', 20), 'Repetir esta venta')),
       h('button', {class:'btn suave', onclick:() => { cerrar(); pedirDevolucion(v); }}, 'Devolver o anular esta venta'));
   });
 }
+/* Repetir: arma un pedido nuevo con los productos de esa venta a los precios de hoy. No copia pagos ni autorizaciones y no registra nada hasta que se cobre. */
+async function repetirVenta(v){
+  if(cart.length && !(await confirmar('Ya tienes un pedido en curso', 'Repetir esta venta lo reemplaza.', 'Reemplazar', 'Dejarlo'))) return;
+  const ventas = await ventasDia(); const vend = vendidoMilli(ventas); const nuevas = [], omitidos = [];
+  for(const l of v.lineas){
+    if(l.productoId === 'envio') continue; const p = prod(l.productoId);
+    if(!p){ omitidos.push(l.nombre + ' (ya no está)'); continue; }
+    if(p.controlStock && (dia.cantidades[p.id] || 0) - (vend[p.id] || 0) <= 0){ omitidos.push(l.nombre + ' (agotado)'); continue; }
+    const ag = {}; for(const a of l.agregos || []) if((dia.agregos || []).some(x => x.id === a.id)) ag[a.id] = a.cant;
+    nuevas.push({pid:p.id, qty:l.qtyMilli, ag});
+  }
+  if(!nuevas.length){ aviso('No se puede repetir: esos productos ya no están disponibles.', true); return; }
+  cartLista = null; cartAuth = false; cart = nuevas; guardarCarrito(); ir('vender'); setTimeout(abrirCarrito, 150);
+  if(omitidos.length) aviso('No se añadió: ' + omitidos.join(', '), true);
+}
+
 function pedirDevolucion(v){
   hoja('Devolver o anular ' + ticket(v.num), cerrar => {
     let tipo = 'devolucion'; const efectivoPagado = v.pagos.some(p => p.metodo === 'efectivo');
